@@ -1,20 +1,20 @@
-import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import 'react-native-get-random-values';
+import Realm from "realm";
+Realm.flags.THROW_ON_GLOBAL_REALM = true;
+import React from 'react';
+import { RealmProvider } from '@realm/react';
+import { Routine } from './src/models/Routine';
+import { Exercise } from './src/models/Exercise';
+import { HomeScreen } from './src/screens/HomeScreen';
+
 
 export default function App() {
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <RealmProvider 
+      schema={[Routine, Exercise]} 
+      deleteRealmIfMigrationNeeded={true}
+    >
+      <HomeScreen />
+    </RealmProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
