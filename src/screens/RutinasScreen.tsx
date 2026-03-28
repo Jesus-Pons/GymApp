@@ -14,7 +14,7 @@ import { useQuery, useRealm } from '@realm/react';
 import { Routine } from '../models/Routine';
 import { Exercise } from '../models/Exercise';
 
-export const HomeScreen = () => {
+export const RutinasScreen = () => {
   const realm = useRealm();
   
   // useQuery obtiene todas las rutinas y se actualiza SOLO cuando cambian
