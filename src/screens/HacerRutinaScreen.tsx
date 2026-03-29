@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, Modal, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { useRealm, useQuery } from '@realm/react';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, CommonActions } from '@react-navigation/native';
 import Realm from 'realm';
 
 import { Routine, RoutineStatus } from '../models/Routine';
@@ -18,8 +18,7 @@ export const HacerRutinaScreen = () => {
 
   const [startTime, setStartTime] = useState<Date | null>(null);
 
-  // --- NUEVO: ESTADO FRONTEND PARA LOS CHECKS ---
-  // Guardamos las IDs (en texto) de los ejercicios que se han marcado
+  // --- ESTADO FRONTEND PARA LOS CHECKS ---
   const [completedExercises, setCompletedExercises] = useState<Set<string>>(new Set());
 
   // --- ESTADOS DEL MODAL ---
@@ -32,6 +31,49 @@ export const HacerRutinaScreen = () => {
   const [editReps, setEditReps] = useState('');
   const [editWeight, setEditWeight] = useState('');
 
+  const isFinishing = useRef(false);
+
+  // --- INTERCEPTAR NAVEGACIÓN ---
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (!activeRoutine || isFinishing.current) {
+        return;
+      }
+
+      e.preventDefault();
+
+      Alert.alert(
+        "Cancelar Entrenamiento",
+        "Si sales ahora se perderá tu progreso y no se guardará en el historial. ¿Estás seguro?",
+        [
+          { text: "Continuar entrenando", style: "cancel" },
+          {
+            text: "Sí, cancelar rutina",
+            style: "destructive",
+            onPress: () => {
+              // 1. LIMPIEZA PROFUNDA: Borramos TODOS los drafts y sus ejercicios (por si había fantasmas)
+              realm.write(() => {
+                const allDrafts = realm.objects(Routine).filtered('status == $0', RoutineStatus.DRAFT);
+                allDrafts.forEach(draft => {
+                  realm.delete(draft.exercises); // Borrado en cascada
+                });
+                realm.delete(allDrafts);
+              });
+
+              setStartTime(null);
+              setCompletedExercises(new Set());
+              
+              isFinishing.current = true;
+              navigation.dispatch(e.data.action);
+            }
+          }
+        ]
+      );
+    });
+
+    return unsubscribe;
+  }, [navigation, activeRoutine]);
+
   useEffect(() => {
     if (activeRoutine && !startTime) {
       setStartTime(new Date());
@@ -40,10 +82,17 @@ export const HacerRutinaScreen = () => {
 
   // --- INICIAR Y FINALIZAR ---
   const handleStartRoutine = (template: Routine) => {
-    // Limpiamos los checks anteriores por si acaso
     setCompletedExercises(new Set()); 
 
     realm.write(() => {
+      // LIMPIEZA PREVIA: Antes de iniciar, borramos cualquier draft antiguo que se quedara colgado
+      const existingDrafts = realm.objects(Routine).filtered('status == $0', RoutineStatus.DRAFT);
+      existingDrafts.forEach(draft => {
+        realm.delete(draft.exercises); 
+      });
+      realm.delete(existingDrafts);
+
+      // Ahora sí, creamos el nuevo
       const draft = realm.create(Routine, {
         _id: new Realm.BSON.UUID(),
         name: template.name,
@@ -64,10 +113,9 @@ export const HacerRutinaScreen = () => {
     });
   };
 
-const handleFinishRoutine = () => {
+  const handleFinishRoutine = () => {
     if (!activeRoutine) return;
 
-    // --- NUEVA VALIDACIÓN: ¿Está vacía la rutina? ---
     if (activeRoutine.exercises.length === 0) {
       Alert.alert(
         "Entrenamiento vacío",
@@ -78,20 +126,30 @@ const handleFinishRoutine = () => {
             text: "Descartar rutina",
             style: "destructive",
             onPress: () => {
-              // Borramos el DRAFT sin guardarlo en el historial
+              // LIMPIEZA PROFUNDA
               realm.write(() => {
-                realm.delete(activeRoutine);
+                const allDrafts = realm.objects(Routine).filtered('status == $0', RoutineStatus.DRAFT);
+                allDrafts.forEach(draft => realm.delete(draft.exercises));
+                realm.delete(allDrafts);
               });
               setStartTime(null);
               setCompletedExercises(new Set());
+              
+              isFinishing.current = true;
+              navigation.dispatch(
+                CommonActions.reset({
+                  index: 0,
+                  routes: [{ name: 'RutinasList' }],
+                })
+              );
             }
           }
         ]
       );
-      return; // Detenemos la ejecución aquí
+      return; 
     }
 
-    // --- VALIDACIÓN FRONTEND: Comprobar checks (solo si hay ejercicios) ---
+    // --- VALIDACIÓN FRONTEND: Comprobar checks ---
     const allCompleted = activeRoutine.exercises.every(ex => 
       completedExercises.has(ex._id.toHexString())
     );
@@ -129,11 +187,21 @@ const handleFinishRoutine = () => {
                 durationMinutes: durationMinutes,
               });
 
+              // Borramos el draft actual ya que lo hemos guardado en el historial
               realm.delete(activeRoutine);
             });
 
             setStartTime(null);
             setCompletedExercises(new Set()); 
+            
+            isFinishing.current = true;
+            navigation.dispatch(
+              CommonActions.reset({
+                index: 0,
+                routes: [{ name: 'RutinasList' }],
+              })
+            );
+            
             navigation.navigate('Historial' as never);
           }
         }
@@ -141,14 +209,14 @@ const handleFinishRoutine = () => {
     );
   };
 
-  // --- TOGGLE CHECKBOX (Frontend Solo) ---
+  // --- TOGGLE CHECKBOX ---
   const toggleExerciseComplete = (exerciseId: string) => {
     setCompletedExercises(prevSet => {
       const newSet = new Set(prevSet);
       if (newSet.has(exerciseId)) {
-        newSet.delete(exerciseId); // Si estaba marcado, lo desmarcamos
+        newSet.delete(exerciseId); 
       } else {
-        newSet.add(exerciseId); // Si no estaba, lo marcamos
+        newSet.add(exerciseId); 
       }
       return newSet;
     });
@@ -233,7 +301,6 @@ const handleFinishRoutine = () => {
               realm.delete(selectedExercise);
             });
             
-            // Si estaba marcado como completado, lo quitamos del Set de checks
             setCompletedExercises(prev => {
               const newSet = new Set(prev);
               newSet.delete(exerciseId);
@@ -253,16 +320,16 @@ const handleFinishRoutine = () => {
       {/* --- MODAL PARA AÑADIR/EDITAR EJERCICIO --- */}
       <Modal visible={isModalVisible} animationType="slide" transparent={true} onRequestClose={closeEditModal}>
         <KeyboardAvoidingView 
-  behavior="padding" // Usamos padding en vez de height o undefined
-  keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20} // Empujoncito extra en Android
-  style={styles.modalOverlay}
->
+          behavior="padding" 
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20} 
+          style={styles.modalOverlay}
+        >
           <View style={styles.modalContent}>
             <ScrollView 
-  showsVerticalScrollIndicator={false} 
-  keyboardShouldPersistTaps="handled"
-  contentContainerStyle={{ flexGrow: 1 }} // <-- Añade esta propiedad
->
+              showsVerticalScrollIndicator={false} 
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ flexGrow: 1 }} 
+            >
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>
                   {modalMode === 'create' ? 'Añadir Ejercicio' : 'Ajustar Ejercicio'}
@@ -349,9 +416,17 @@ const handleFinishRoutine = () => {
         </>
       ) : (
         <>
-          <View style={styles.header}>
-            <Text style={styles.title}>{activeRoutine.name}</Text>
-            <Text style={styles.subtitleActive}>Entrenamiento en curso 🔥</Text>
+          <View style={[styles.header, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
+            <View>
+              <Text style={styles.title}>{activeRoutine.name}</Text>
+              <Text style={styles.subtitleActive}>Entrenamiento en curso 🔥</Text>
+            </View>
+            <TouchableOpacity 
+              style={styles.cancelSessionBtn} 
+              onPress={() => navigation.goBack()} 
+            >
+              <Text style={styles.cancelSessionBtnText}>✕ Cancelar</Text>
+            </TouchableOpacity>
           </View>
 
           <FlatList
@@ -404,7 +479,6 @@ const handleFinishRoutine = () => {
             <TouchableOpacity 
               style={[
                 styles.finishButton, 
-                // Se pone gris si NO hay ejercicios, O si faltan checks por marcar
                 (activeRoutine.exercises.length === 0 || completedExercises.size !== activeRoutine.exercises.length) 
                   && { backgroundColor: '#9CA3AF' }
               ]} 
@@ -476,4 +550,15 @@ const styles = StyleSheet.create({
   saveButtonText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
   deleteButton: { marginTop: 10, paddingVertical: 12, alignItems: 'center' },
   deleteButtonText: { color: '#EF4444', fontSize: 16, fontWeight: '600' },
+  cancelSessionBtn: {
+    backgroundColor: '#FEE2E2', 
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  cancelSessionBtnText: {
+    color: '#EF4444', 
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
 });

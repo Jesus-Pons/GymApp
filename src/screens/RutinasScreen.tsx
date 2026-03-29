@@ -1,5 +1,5 @@
 import Realm from "realm";
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -11,6 +11,7 @@ import {
   Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 
 // Importamos los hooks de Realm
 import { useQuery, useRealm } from '@realm/react';
@@ -35,10 +36,25 @@ const COLORS = {
 
 export const RutinasScreen = () => {
   const realm = useRealm();
+  const navigation = useNavigation<any>();
   
   const routines = useQuery(Routine, (collection) => 
     collection.filtered('status == $0', RoutineStatus.TEMPLATE)
   );
+
+  // --- NUEVO: Buscamos si hay alguna rutina a medias ---
+  const drafts = useQuery(Routine, (collection) => 
+    collection.filtered('status == $0', RoutineStatus.DRAFT)
+  );
+
+  // --- NUEVO: Redirección automática ---
+  // Si entramos a la pantalla de Rutinas y existe un DRAFT, 
+  // saltamos directamente a la pantalla de hacer rutina.
+  useEffect(() => {
+    if (drafts.length > 0) {
+      navigation.navigate('HacerRutina');
+    }
+  }, [drafts.length, navigation]);
 
   const [selectedRoutine, setSelectedRoutine] = useState<Routine | null>(null);
 
@@ -51,6 +67,41 @@ export const RutinasScreen = () => {
   const [isExerciseModalVisible, setExerciseModalVisible] = useState(false);
   const [editingExercise, setEditingExercise] = useState<Exercise | null>(null);
   const [exerciseForm, setExerciseForm] = useState({ name: '', series: '', reps: '', weight: '' });
+
+  // ==========================================
+  // LÓGICA PARA EMPEZAR A ENTRENAR
+  // ==========================================
+  const startRoutine = (templateRoutine: Routine) => {
+    let draftId: string = '';
+
+    realm.write(() => {
+      // 1. Creamos una nueva rutina en modo DRAFT
+      const draftRoutine = realm.create(Routine, {
+        _id: new Realm.BSON.UUID(),
+        name: templateRoutine.name,
+        status: RoutineStatus.DRAFT,
+        exercises: [],
+        createdAt: new Date(),
+      });
+
+      // 2. Hacemos una copia profunda de cada ejercicio para no sobreescribir la plantilla
+      templateRoutine.exercises.forEach(ex => {
+        const copiedEx = realm.create(Exercise, {
+          _id: new Realm.BSON.UUID(), // IMPORTANTE: Nuevo ID para el ejercicio copiado
+          name: ex.name,
+          series: ex.series,
+          reps: ex.reps,
+          weight: ex.weight,
+        });
+        draftRoutine.exercises.push(copiedEx);
+      });
+
+      draftId = draftRoutine._id.toHexString();
+    });
+
+    // 3. Navegamos a la pantalla de entrenamiento pasándole el ID del borrador
+    navigation.navigate('HacerRutina', { routineId: draftId });
+  };
 
   // ==========================================
   // FUNCIONES CRUD PARA RUTINAS
@@ -171,10 +222,9 @@ export const RutinasScreen = () => {
             <Text style={styles.title} numberOfLines={1}>{selectedRoutine.name}</Text>
           </TouchableOpacity>
           
-          {/* NUEVA ZONA: Acciones derechas (Eliminar + Añadir) */}
           <View style={styles.headerRightActions}>
             <TouchableOpacity style={styles.iconButton} onPress={() => deleteRoutine(selectedRoutine)}>
-              <Text style={[styles.iconButtonText, styles.addButtonTextMinimal, { color: COLORS.danger }]}>🗑️ Eliminar</Text>
+              <Text style={styles.iconButtonText}>🗑️</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.addButtonMinimal} onPress={() => openExerciseModal()}>
               <Text style={styles.addButtonTextMinimal}>+ Añadir</Text>
@@ -205,7 +255,7 @@ export const RutinasScreen = () => {
           }
         />
 
-        {/* MODAL EJERCICIOS (Mantiene su botón de eliminar) */}
+        {/* MODAL EJERCICIOS */}
         <Modal visible={isExerciseModalVisible} transparent animationType="fade">
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
@@ -235,7 +285,7 @@ export const RutinasScreen = () => {
           </View>
         </Modal>
 
-        {/* MODAL EDITAR RUTINA (Desde el detalle - Botón eliminar eliminado de aquí) */}
+        {/* MODAL EDITAR RUTINA */}
         <Modal visible={isRoutineModalVisible} transparent animationType="fade">
             <View style={styles.modalOverlay}>
                 <View style={styles.modalContent}>
@@ -281,12 +331,20 @@ export const RutinasScreen = () => {
             style={styles.routineCard}
           >
             <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
-              <Text style={styles.exerciseCount}>{item.exercises.length} ejercicios</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
+                <Text style={styles.cardSubtitle}>
+                  {item.exercises.length} ejercicios • {item.createdAt.toLocaleDateString()}
+                </Text>
+              </View>
+              
+              <TouchableOpacity 
+                style={styles.playButton} 
+                onPress={() => startRoutine(item)}
+              >
+                <Text style={styles.playButtonText}>Empezar</Text>
+              </TouchableOpacity>
             </View>
-            <Text style={styles.cardSubtitle}>
-              Creada el {item.createdAt.toLocaleDateString()}
-            </Text>
           </TouchableOpacity>
         )}
         ListEmptyComponent={
@@ -294,7 +352,7 @@ export const RutinasScreen = () => {
         }
       />
 
-      {/* MODAL CREAR/EDITAR RUTINA (Botón eliminar eliminado) */}
+      {/* MODAL CREAR/EDITAR RUTINA */}
       <Modal visible={isRoutineModalVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -332,7 +390,6 @@ const styles = StyleSheet.create({
   backButton: { marginRight: 15, padding: 5 },
   backButtonText: { color: COLORS.primary, fontSize: 28, fontWeight: '300' },
   
-  // Contenedor para alinear los botones en la cabecera
   headerRightActions: { flexDirection: 'row', alignItems: 'center' },
   iconButton: { paddingHorizontal: 10, paddingVertical: 6, marginRight: 5 },
   iconButtonText: { fontSize: 20 },
@@ -346,10 +403,23 @@ const styles = StyleSheet.create({
     shadowColor: "#000", shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.08, shadowRadius: 10, elevation: 3, 
   },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  cardTitle: { fontSize: 20, fontWeight: '700', color: COLORS.text, flex: 1, marginRight: 10 },
-  exerciseCount: { fontSize: 14, color: COLORS.subText, fontWeight: '600', backgroundColor: COLORS.tagBg, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  cardTitle: { fontSize: 20, fontWeight: '700', color: COLORS.text, marginBottom: 4 },
   cardSubtitle: { fontSize: 14, color: COLORS.subText },
+  
+  // Estilos del nuevo botón "Empezar"
+  playButton: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    marginLeft: 10,
+  },
+  playButtonText: {
+    color: COLORS.cardBg,
+    fontWeight: '700',
+    fontSize: 14,
+  },
   
   exerciseItem: { 
     backgroundColor: COLORS.cardBg, paddingHorizontal: 20, paddingVertical: 18, 
@@ -372,12 +442,9 @@ const styles = StyleSheet.create({
   },
   rowInputs: { flexDirection: 'row', justifyContent: 'space-between' },
   
-  // Botones para el Modal de Ejercicios (espacio para el eliminar)
   modalActionsRow: { 
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 15 
   },
-  
-  // Botones para el Modal de Rutinas (todo a la derecha porque no hay eliminar)
   modalActionsRowEnd: { 
     flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 15 
   },
