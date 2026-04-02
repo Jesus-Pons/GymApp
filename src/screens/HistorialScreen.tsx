@@ -41,13 +41,39 @@ export const HistorialScreen = () => {
     Alert.alert('Eliminar registro', `¿Seguro que quieres borrar este registro de "${record.name}" del historial?`, [
       { text: 'Cancelar', style: 'cancel' },
       { text: 'Eliminar', style: 'destructive', onPress: () => {
-        realm.write(() => {
-          record.exercises.forEach((exercise) => {
-            realm.delete(exercise.series);
+        // Si estamos viendo el detalle de este registro, lo cerramos antes de eliminarlo
+        if (selectedHistory?._id.toHexString() === record._id.toHexString()) {
+          setSelectedHistory(null);
+        }
+        // Usamos setTimeout para asegurar que la UI se actualice antes de borrar el objeto
+        setTimeout(() => {
+          realm.write(() => {
+            record.exercises.forEach((exercise) => {
+              realm.delete(exercise.series);
+            });
+            // Eliminamos los ejercicios asociados a esta copia del historial
+            realm.delete(record.exercises); 
+            realm.delete(record);
           });
-          // Eliminamos los ejercicios asociados a esta copia del historial
-          realm.delete(record.exercises); 
-          realm.delete(record);
+        }, 0);
+      }}
+    ]);
+  };
+
+  // Función para eliminar todo el historial
+  const deleteAllHistory = () => {
+    if (history.length === 0) return;
+    Alert.alert('Borrar todo el historial', '¿Seguro que quieres borrar todos los entrenamientos del historial? Esta acción no se puede deshacer.', [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Borrar todo', style: 'destructive', onPress: () => {
+        realm.write(() => {
+          history.forEach(record => {
+            record.exercises.forEach((exercise) => {
+              realm.delete(exercise.series);
+            });
+            realm.delete(record.exercises);
+          });
+          realm.delete(history);
         });
       }}
     ]);
@@ -56,7 +82,7 @@ export const HistorialScreen = () => {
   // ==========================================
   // VISTA DE DETALLE DEL HISTORIAL (Solo lectura)
   // ==========================================
-  if (selectedHistory) {
+  if (selectedHistory && selectedHistory.isValid()) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
@@ -69,6 +95,12 @@ export const HistorialScreen = () => {
               {selectedHistory.completedAt.toLocaleDateString()} • {selectedHistory.durationMinutes} min
             </Text>
           </View>
+          <TouchableOpacity 
+            onPress={() => deleteHistoryRecord(selectedHistory)}
+            style={styles.deleteDetailButton}
+          >
+            <Text style={styles.deleteIconText}>🗑️</Text>
+          </TouchableOpacity>
         </View>
 
         <FlatList
@@ -113,8 +145,13 @@ export const HistorialScreen = () => {
   // ==========================================
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { justifyContent: 'space-between' }]}>
         <Text style={styles.title}>Historial</Text>
+        {history.length > 0 && (
+          <TouchableOpacity onPress={deleteAllHistory} style={styles.deleteAllButton}>
+            <Text style={styles.deleteAllText}>🗑️ Borrar todo</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <FlatList
@@ -130,7 +167,15 @@ export const HistorialScreen = () => {
           >
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
-              <Text style={styles.durationTag}>{item.durationMinutes} min</Text>
+              <View style={styles.cardHeaderRight}>
+                <Text style={styles.durationTag}>{item.durationMinutes} min</Text>
+                <TouchableOpacity 
+                  onPress={() => deleteHistoryRecord(item)}
+                  style={styles.deleteIconButton}
+                >
+                  <Text style={styles.deleteIconText}>🗑️</Text>
+                </TouchableOpacity>
+              </View>
             </View>
             
             <View style={styles.cardFooter}>
@@ -167,6 +212,13 @@ const styles = StyleSheet.create({
   backButton: { marginRight: 5, padding: 5 },
   backButtonText: { color: COLORS.primary, fontSize: 28, fontWeight: '300' },
   
+  deleteAllButton: { padding: 5 },
+  deleteAllText: { color: COLORS.danger, fontWeight: '600', fontSize: 16 },
+  deleteDetailButton: { padding: 5, marginLeft: 10 },
+  cardHeaderRight: { flexDirection: 'row', alignItems: 'center' },
+  deleteIconButton: { marginLeft: 10, padding: 4 },
+  deleteIconText: { fontSize: 18 },
+
   // Tarjetas del Historial
   routineCard: { 
     backgroundColor: COLORS.cardBg, padding: 20, marginHorizontal: 16, 
