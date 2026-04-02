@@ -12,6 +12,7 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { Routine } from './src/models/Routine';
 import { Exercise } from './src/models/Exercise';
 import { HistoryRoutine } from './src/models/HistoryRoutine';
+import { Serie } from './src/models/Serie';
 
 // Pantallas
 import { RutinasScreen } from './src/screens/RutinasScreen';
@@ -37,7 +38,7 @@ function RutinasStack() {
 export default function App() {
   return (
     <RealmProvider 
-      schema={[Routine, Exercise, HistoryRoutine]} 
+      schema={[Routine, Exercise, Serie, HistoryRoutine]} 
       deleteRealmIfMigrationNeeded={true}
     >
       <NavigationContainer>

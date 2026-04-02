@@ -42,6 +42,9 @@ export const HistorialScreen = () => {
       { text: 'Cancelar', style: 'cancel' },
       { text: 'Eliminar', style: 'destructive', onPress: () => {
         realm.write(() => {
+          record.exercises.forEach((exercise) => {
+            realm.delete(exercise.series);
+          });
           // Eliminamos los ejercicios asociados a esta copia del historial
           realm.delete(record.exercises); 
           realm.delete(record);
@@ -78,11 +81,22 @@ export const HistorialScreen = () => {
                 <Text style={styles.exerciseTitle}>{item.name}</Text>
               </View>
               <View style={styles.tagContainer}>
-                <View style={styles.dataTag}><Text style={styles.tagText}>{item.series} Ser</Text></View>
-                <View style={styles.dataTag}><Text style={styles.tagText}>{item.reps} Rep</Text></View>
-                {item.weight > 0 && (
-                  <View style={styles.dataTag}><Text style={styles.tagText}>{item.weight} kg</Text></View>
+                <View style={styles.dataTag}><Text style={styles.tagText}>{item.series.length} Ser</Text></View>
+                <View style={styles.dataTag}><Text style={styles.tagText}>{item.descanso} s</Text></View>
+                {item.series[0] && (
+                  <View style={styles.dataTag}><Text style={styles.tagText}>{item.series[0].reps} Rep x {item.series[0].weight} kg</Text></View>
                 )}
+              </View>
+
+              <View style={styles.seriesList}>
+                {item.series.map((serie, index) => (
+                  <View key={serie._id.toHexString()} style={styles.seriesRow}>
+                    <View style={[styles.seriesStatus, serie.completed && styles.seriesStatusCompleted]}>
+                      <Text style={styles.seriesStatusText}>{serie.completed ? '✓' : ''}</Text>
+                    </View>
+                    <Text style={styles.seriesText}>Serie {index + 1}: {serie.reps} reps · {serie.weight} kg</Text>
+                  </View>
+                ))}
               </View>
             </View>
           )}
@@ -178,6 +192,13 @@ const styles = StyleSheet.create({
   tagContainer: { flexDirection: 'row' },
   dataTag: { backgroundColor: COLORS.tagBg, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, marginRight: 8 },
   tagText: { color: COLORS.subText, fontSize: 13, fontWeight: '600' },
+
+  seriesList: { marginTop: 12, gap: 8 },
+  seriesRow: { flexDirection: 'row', alignItems: 'center' },
+  seriesStatus: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center', marginRight: 10, backgroundColor: COLORS.cardBg },
+  seriesStatusCompleted: { backgroundColor: '#10B981', borderColor: '#10B981' },
+  seriesStatusText: { color: COLORS.cardBg, fontWeight: '800', fontSize: 12, marginTop: -1 },
+  seriesText: { color: COLORS.text, fontSize: 14, fontWeight: '500' },
 
   emptyText: { textAlign: 'center', marginTop: 60, color: COLORS.subText, fontSize: 16, paddingHorizontal: 40 },
 });

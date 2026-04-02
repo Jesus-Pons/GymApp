@@ -7,6 +7,7 @@ import Realm from 'realm';
 import { Routine, RoutineStatus } from '../models/Routine';
 import { HistoryRoutine } from '../models/HistoryRoutine';
 import { Exercise } from '../models/Exercise';
+import { Serie } from '../models/Serie';
 
 export const HacerRutinaScreen = () => {
   const realm = useRealm();
@@ -18,20 +19,66 @@ export const HacerRutinaScreen = () => {
 
   const [startTime, setStartTime] = useState<Date | null>(null);
 
-  // --- ESTADO FRONTEND PARA LOS CHECKS ---
-  const [completedExercises, setCompletedExercises] = useState<Set<string>>(new Set());
-
   // --- ESTADOS DEL MODAL ---
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
   const [selectedExercise, setSelectedExercise] = useState<Exercise | null>(null);
   
   const [editName, setEditName] = useState('');
-  const [editSeries, setEditSeries] = useState('');
+  const [editSeriesCount, setEditSeriesCount] = useState('');
   const [editReps, setEditReps] = useState('');
   const [editWeight, setEditWeight] = useState('');
+  const [editRest, setEditRest] = useState('');
 
   const isFinishing = useRef(false);
+
+  const clearDraftRoutines = () => {
+    const allDrafts = realm.objects(Routine).filtered('status == $0', RoutineStatus.DRAFT);
+
+    allDrafts.forEach((draft) => {
+      draft.exercises.forEach((exercise) => {
+        realm.delete(exercise.series);
+      });
+      realm.delete(draft.exercises);
+    });
+
+    realm.delete(allDrafts);
+  };
+
+  const cloneExerciseData = (exercise: Exercise) => ({
+    _id: new Realm.BSON.UUID(),
+    name: exercise.name,
+    descanso: exercise.descanso,
+    series: exercise.series.map((serie) => ({
+      _id: new Realm.BSON.UUID(),
+      reps: serie.reps,
+      weight: serie.weight,
+      completed: serie.completed,
+    })),
+  });
+
+  const syncExerciseSeries = (exercise: Exercise, seriesCount: number, reps: number, weight: number) => {
+    while (exercise.series.length > seriesCount) {
+      const lastSeries = exercise.series[exercise.series.length - 1];
+      realm.delete(lastSeries);
+    }
+
+    while (exercise.series.length < seriesCount) {
+      exercise.series.push(
+        realm.create(Serie, {
+          _id: new Realm.BSON.UUID(),
+          reps,
+          weight,
+          completed: false,
+        })
+      );
+    }
+
+    exercise.series.forEach((serie) => {
+      serie.reps = reps;
+      serie.weight = weight;
+    });
+  };
 
   // --- INTERCEPTAR NAVEGACIÓN ---
   useEffect(() => {
@@ -51,17 +98,10 @@ export const HacerRutinaScreen = () => {
             text: "Sí, cancelar rutina",
             style: "destructive",
             onPress: () => {
-              // 1. LIMPIEZA PROFUNDA: Borramos TODOS los drafts y sus ejercicios (por si había fantasmas)
               realm.write(() => {
-                const allDrafts = realm.objects(Routine).filtered('status == $0', RoutineStatus.DRAFT);
-                allDrafts.forEach(draft => {
-                  realm.delete(draft.exercises); // Borrado en cascada
-                });
-                realm.delete(allDrafts);
+                clearDraftRoutines();
               });
-
               setStartTime(null);
-              setCompletedExercises(new Set());
               
               isFinishing.current = true;
               navigation.dispatch(e.data.action);
@@ -82,33 +122,31 @@ export const HacerRutinaScreen = () => {
 
   // --- INICIAR Y FINALIZAR ---
   const handleStartRoutine = (template: Routine) => {
-    setCompletedExercises(new Set()); 
-
     realm.write(() => {
-      // LIMPIEZA PREVIA: Antes de iniciar, borramos cualquier draft antiguo que se quedara colgado
-      const existingDrafts = realm.objects(Routine).filtered('status == $0', RoutineStatus.DRAFT);
-      existingDrafts.forEach(draft => {
-        realm.delete(draft.exercises); 
-      });
-      realm.delete(existingDrafts);
+      clearDraftRoutines();
 
-      // Ahora sí, creamos el nuevo
       const draft = realm.create(Routine, {
         _id: new Realm.BSON.UUID(),
         name: template.name,
         status: RoutineStatus.DRAFT,
         createdAt: new Date(),
-        exercises: [] 
+        exercises: [],
       });
 
-      template.exercises.forEach(ex => {
-        draft.exercises.push(realm.create(Exercise, {
+      template.exercises.forEach((exercise) => {
+        const copiedExercise = realm.create(Exercise, {
           _id: new Realm.BSON.UUID(),
-          name: ex.name,
-          series: ex.series,
-          reps: ex.reps,
-          weight: ex.weight
-        }));
+          name: exercise.name,
+          descanso: exercise.descanso,
+          series: exercise.series.map((serie) => ({
+            _id: new Realm.BSON.UUID(),
+            reps: serie.reps,
+            weight: serie.weight,
+            completed: false,
+          })),
+        });
+
+        draft.exercises.push(copiedExercise);
       });
     });
   };
@@ -126,14 +164,10 @@ export const HacerRutinaScreen = () => {
             text: "Descartar rutina",
             style: "destructive",
             onPress: () => {
-              // LIMPIEZA PROFUNDA
               realm.write(() => {
-                const allDrafts = realm.objects(Routine).filtered('status == $0', RoutineStatus.DRAFT);
-                allDrafts.forEach(draft => realm.delete(draft.exercises));
-                realm.delete(allDrafts);
+                clearDraftRoutines();
               });
               setStartTime(null);
-              setCompletedExercises(new Set());
               
               isFinishing.current = true;
               navigation.dispatch(
@@ -149,15 +183,12 @@ export const HacerRutinaScreen = () => {
       return; 
     }
 
-    // --- VALIDACIÓN FRONTEND: Comprobar checks ---
-    const allCompleted = activeRoutine.exercises.every(ex => 
-      completedExercises.has(ex._id.toHexString())
-    );
+    const allCompleted = activeRoutine.exercises.every((exercise) => exercise.isCompleted);
     
     if (!allCompleted) {
       Alert.alert(
         "¡Entrenamiento incompleto!", 
-        "Debes marcar todos los ejercicios con el check (✅) antes de poder finalizar el entrenamiento."
+        "Debes completar todas las series antes de poder finalizar el entrenamiento."
       );
       return;
     }
@@ -174,25 +205,34 @@ export const HacerRutinaScreen = () => {
           onPress: () => {
             const endTime = new Date();
             const durationMs = startTime ? endTime.getTime() - startTime.getTime() : 60000;
-            const durationMinutes = Math.max(1, Math.floor(durationMs / 60000)); 
+            const durationMinutes = Math.max(1, Math.floor(durationMs / 60000));
 
             realm.write(() => {
-              realm.create(HistoryRoutine, {
+              const historyRoutine = realm.create(HistoryRoutine, {
                 _id: new Realm.BSON.UUID(),
-                originalRoutineId: activeRoutine.name,
+                originalRoutineId: activeRoutine._id.toHexString(),
                 name: activeRoutine.name,
-                exercises: activeRoutine.exercises, 
+                exercises: [],
                 createdAt: activeRoutine.createdAt,
                 completedAt: endTime,
                 durationMinutes: durationMinutes,
               });
 
-              // Borramos el draft actual ya que lo hemos guardado en el historial
+              activeRoutine.exercises.forEach((exercise) => {
+                historyRoutine.exercises.push(
+                  realm.create(Exercise, cloneExerciseData(exercise))
+                );
+              });
+
+              activeRoutine.exercises.forEach((exercise) => {
+                realm.delete(exercise.series);
+              });
+
+              realm.delete(activeRoutine.exercises);
               realm.delete(activeRoutine);
             });
 
             setStartTime(null);
-            setCompletedExercises(new Set()); 
             
             isFinishing.current = true;
             navigation.dispatch(
@@ -209,16 +249,9 @@ export const HacerRutinaScreen = () => {
     );
   };
 
-  // --- TOGGLE CHECKBOX ---
-  const toggleExerciseComplete = (exerciseId: string) => {
-    setCompletedExercises(prevSet => {
-      const newSet = new Set(prevSet);
-      if (newSet.has(exerciseId)) {
-        newSet.delete(exerciseId); 
-      } else {
-        newSet.add(exerciseId); 
-      }
-      return newSet;
+  const toggleSerieComplete = (serie: Serie) => {
+    realm.write(() => {
+      serie.completed = !serie.completed;
     });
   };
 
@@ -227,9 +260,10 @@ export const HacerRutinaScreen = () => {
     setModalMode('edit');
     setSelectedExercise(exercise);
     setEditName(exercise.name);
-    setEditSeries(exercise.series.toString());
-    setEditReps(exercise.reps.toString());
-    setEditWeight(exercise.weight.toString());
+    setEditSeriesCount(exercise.series.length.toString());
+    setEditReps((exercise.series[0]?.reps ?? 0).toString());
+    setEditWeight((exercise.series[0]?.weight ?? 0).toString());
+    setEditRest(exercise.descanso.toString());
     setIsModalVisible(true);
   };
 
@@ -237,9 +271,10 @@ export const HacerRutinaScreen = () => {
     setModalMode('create');
     setSelectedExercise(null);
     setEditName('');
-    setEditSeries('');
-    setEditReps('');
-    setEditWeight('');
+    setEditSeriesCount('3');
+    setEditReps('10');
+    setEditWeight('0');
+    setEditRest('60');
     setIsModalVisible(true);
   };
 
@@ -254,11 +289,12 @@ export const HacerRutinaScreen = () => {
       return;
     }
 
-    const numSeries = parseInt(editSeries, 10);
+    const numSeries = parseInt(editSeriesCount, 10);
     const numReps = parseInt(editReps, 10);
     const numWeight = parseFloat(editWeight.replace(',', '.'));
+    const numRest = parseInt(editRest, 10);
 
-    if (isNaN(numSeries) || isNaN(numReps) || isNaN(numWeight) || numSeries < 0 || numReps < 0 || numWeight < 0) {
+    if (isNaN(numSeries) || isNaN(numReps) || isNaN(numWeight) || isNaN(numRest) || numSeries < 1 || numReps < 0 || numWeight < 0 || numRest < 0) {
       Alert.alert("Datos inválidos", "Por favor, introduce números válidos.");
       return;
     }
@@ -266,16 +302,19 @@ export const HacerRutinaScreen = () => {
     realm.write(() => {
       if (modalMode === 'edit' && selectedExercise) {
         selectedExercise.name = editName;
-        selectedExercise.series = numSeries;
-        selectedExercise.reps = numReps;
-        selectedExercise.weight = numWeight;
+        selectedExercise.descanso = numRest;
+        syncExerciseSeries(selectedExercise, numSeries, numReps, numWeight);
       } else if (modalMode === 'create' && activeRoutine) {
         const newExercise = realm.create(Exercise, {
           _id: new Realm.BSON.UUID(),
           name: editName,
-          series: numSeries,
-          reps: numReps,
-          weight: numWeight,
+          descanso: numRest,
+          series: Array.from({ length: numSeries }, () => ({
+            _id: new Realm.BSON.UUID(),
+            reps: numReps,
+            weight: numWeight,
+            completed: false,
+          })),
         });
         activeRoutine.exercises.push(newExercise);
       }
@@ -296,17 +335,10 @@ export const HacerRutinaScreen = () => {
           text: "Eliminar",
           style: "destructive",
           onPress: () => {
-            const exerciseId = selectedExercise._id.toHexString();
             realm.write(() => {
+              realm.delete(selectedExercise.series);
               realm.delete(selectedExercise);
             });
-            
-            setCompletedExercises(prev => {
-              const newSet = new Set(prev);
-              newSet.delete(exerciseId);
-              return newSet;
-            });
-            
             closeEditModal();
           }
         }
@@ -350,7 +382,7 @@ export const HacerRutinaScreen = () => {
                 <View style={styles.rowInputs}>
                   <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
                     <Text style={styles.inputLabel}>Series</Text>
-                    <TextInput style={styles.numericInput} keyboardType="numeric" value={editSeries} onChangeText={setEditSeries} placeholder="3" />
+                    <TextInput style={styles.numericInput} keyboardType="numeric" value={editSeriesCount} onChangeText={setEditSeriesCount} placeholder="3" />
                   </View>
                   <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
                     <Text style={styles.inputLabel}>Reps</Text>
@@ -360,6 +392,11 @@ export const HacerRutinaScreen = () => {
                     <Text style={styles.inputLabel}>Kg</Text>
                     <TextInput style={styles.numericInput} keyboardType="decimal-pad" value={editWeight} onChangeText={setEditWeight} placeholder="60" />
                   </View>
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Descanso entre series (segundos)</Text>
+                  <TextInput style={styles.numericInput} keyboardType="numeric" value={editRest} onChangeText={setEditRest} placeholder="60" />
                 </View>
               </View>
 
@@ -439,36 +476,52 @@ export const HacerRutinaScreen = () => {
               </TouchableOpacity>
             }
             renderItem={({ item }) => {
-              const isChecked = completedExercises.has(item._id.toHexString());
+              const completedSeriesCount = item.series.filter((serie) => serie.completed).length;
+              const isCompleted = item.isCompleted;
               
               return (
-                <View style={[styles.exerciseCardWrapper, isChecked && styles.exerciseCardCompleted]}>
-                  
-                  <TouchableOpacity 
-                    style={styles.checkboxContainer} 
-                    onPress={() => toggleExerciseComplete(item._id.toHexString())}
-                    activeOpacity={0.6}
-                  >
-                    <View style={[styles.checkbox, isChecked && styles.checkboxChecked]}>
-                      {isChecked && <Text style={styles.checkmark}>✓</Text>}
-                    </View>
-                  </TouchableOpacity>
+                <View style={[styles.exerciseCardWrapper, isCompleted && styles.exerciseCardCompleted]}>
+                  <View style={styles.exerciseCardBody}>
+                    <View style={styles.exerciseHeaderRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.exerciseName, isCompleted && styles.textCompleted]}>{item.name}</Text>
+                        <View style={styles.exerciseInfoRow}>
+                          <Text style={styles.exerciseDetails}><Text style={styles.bold}>{item.series.length}</Text> series</Text>
+                          <Text style={styles.exerciseDetails}><Text style={styles.bold}>{item.descanso}</Text> s descanso</Text>
+                          <Text style={styles.exerciseDetails}><Text style={styles.bold}>{completedSeriesCount}/{item.series.length}</Text> hechas</Text>
+                        </View>
+                      </View>
 
-                  <TouchableOpacity 
-                    style={{ flex: 1, padding: 16, paddingLeft: 0 }} 
-                    onPress={() => openEditModal(item)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.exerciseName, isChecked && styles.textCompleted]}>{item.name}</Text>
-                    <View style={styles.exerciseInfoRow}>
-                      <Text style={styles.exerciseDetails}><Text style={styles.bold}>{item.series}</Text> series</Text>
-                      <Text style={styles.exerciseDetails}><Text style={styles.bold}>{item.reps}</Text> reps</Text>
-                      <Text style={styles.exerciseDetails}><Text style={styles.bold}>{item.weight}</Text> kg</Text>
+                      <TouchableOpacity style={styles.editExerciseButton} onPress={() => openEditModal(item)}>
+                        <Text style={styles.editExerciseButtonText}>Editar</Text>
+                      </TouchableOpacity>
                     </View>
-                  </TouchableOpacity>
-                  
-                  <View style={{ paddingRight: 16, justifyContent: 'center' }}>
-                    <Text style={styles.editIcon}></Text>
+
+                    <View style={styles.seriesList}>
+                      {item.series.map((serie, index) => {
+                        const serieDone = serie.completed;
+
+                        return (
+                          <TouchableOpacity
+                            key={serie._id.toHexString()}
+                            style={[styles.seriesRow, serieDone && styles.seriesRowCompleted]}
+                            activeOpacity={0.7}
+                            onPress={() => toggleSerieComplete(serie)}
+                          >
+                            <View style={[styles.seriesCheckbox, serieDone && styles.seriesCheckboxChecked]}>
+                              {serieDone && <Text style={styles.seriesCheckmark}>✓</Text>}
+                            </View>
+
+                            <View style={{ flex: 1 }}>
+                              <Text style={[styles.seriesTitle, serieDone && styles.textCompleted]}>Serie {index + 1}</Text>
+                              <Text style={styles.seriesSubtitle}>
+                                <Text style={styles.bold}>{serie.reps}</Text> reps · <Text style={styles.bold}>{serie.weight}</Text> kg
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
                   </View>
                 </View>
               );
@@ -479,7 +532,7 @@ export const HacerRutinaScreen = () => {
             <TouchableOpacity 
               style={[
                 styles.finishButton, 
-                (activeRoutine.exercises.length === 0 || completedExercises.size !== activeRoutine.exercises.length) 
+                (activeRoutine.exercises.length === 0 || !activeRoutine.exercises.every((exercise) => exercise.isCompleted)) 
                   && { backgroundColor: '#9CA3AF' }
               ]} 
               onPress={handleFinishRoutine}
@@ -511,20 +564,28 @@ const styles = StyleSheet.create({
   startButton: { backgroundColor: '#3B82F6', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8 },
   startButtonText: { color: 'white', fontWeight: 'bold', fontSize: 14 },
 
-  exerciseCardWrapper: { backgroundColor: '#FFFFFF', borderRadius: 12, marginBottom: 12, flexDirection: 'row', elevation: 2 },
-  exerciseCardCompleted: { opacity: 0.6, backgroundColor: '#F9FAFB' },
-  
-  checkboxContainer: { padding: 16, justifyContent: 'center', alignItems: 'center' },
-  checkbox: { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: '#D1D5DB', justifyContent: 'center', alignItems: 'center' },
-  checkboxChecked: { backgroundColor: '#10B981', borderColor: '#10B981' },
-  checkmark: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 16, marginTop: -2 },
+  exerciseCardWrapper: { backgroundColor: '#FFFFFF', borderRadius: 12, marginBottom: 12, elevation: 2, overflow: 'hidden' },
+  exerciseCardCompleted: { opacity: 0.72, backgroundColor: '#F9FAFB' },
+  exerciseCardBody: { padding: 16 },
+  exerciseHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 },
+  editExerciseButton: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: '#EFF6FF', marginLeft: 12 },
+  editExerciseButtonText: { color: '#2563EB', fontWeight: '700', fontSize: 12 },
   
   exerciseName: { fontSize: 18, fontWeight: 'bold', color: '#1F2937', marginBottom: 8 },
   textCompleted: { textDecorationLine: 'line-through', color: '#6B7280' },
-  exerciseInfoRow: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#F9FAFB', padding: 10, borderRadius: 8, marginRight: 10 },
+  exerciseInfoRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, backgroundColor: '#F9FAFB', padding: 10, borderRadius: 8 },
   exerciseDetails: { fontSize: 15, color: '#4B5563' },
   bold: { fontWeight: 'bold', color: '#111827' },
   editIcon: { fontSize: 16, color: '#9CA3AF' },
+
+  seriesList: { marginTop: 14, gap: 10 },
+  seriesRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F9FAFB', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#E5E7EB' },
+  seriesRowCompleted: { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' },
+  seriesCheckbox: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: '#D1D5DB', justifyContent: 'center', alignItems: 'center', marginRight: 12, backgroundColor: '#FFFFFF' },
+  seriesCheckboxChecked: { backgroundColor: '#10B981', borderColor: '#10B981' },
+  seriesCheckmark: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 14, marginTop: -1 },
+  seriesTitle: { fontSize: 15, fontWeight: '700', color: '#1F2937' },
+  seriesSubtitle: { fontSize: 14, color: '#4B5563', marginTop: 2 },
   
   addExerciseBtn: { backgroundColor: '#E0E7FF', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 10, borderWidth: 1, borderColor: '#C7D2FE', borderStyle: 'dashed' },
   addExerciseBtnText: { color: '#4F46E5', fontWeight: 'bold', fontSize: 16 },

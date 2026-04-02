@@ -1,11 +1,16 @@
 import Realm, { ObjectSchema } from 'realm';
+import { Serie } from './Serie';
 
 export class Exercise extends Realm.Object<Exercise> {
   _id!: Realm.BSON.UUID;
   name!: string;
-  series!: number;
-  reps!: number;
-  weight!: number;
+  series!: Realm.List<Serie>;
+  descanso!: number; // segundos
+
+  get isCompleted(): boolean {
+    if (!this.series || this.series.length === 0) return false;
+    return this.series.every(serie => serie.completed);
+  }
 
   static schema: ObjectSchema = {
     name: 'Exercise',
@@ -13,9 +18,9 @@ export class Exercise extends Realm.Object<Exercise> {
     properties: {
       _id: 'uuid',
       name: 'string',
-      series: 'int',
-      reps: 'int',
-      weight: 'float',
+      series: 'Serie[]',
+      descanso: 'int',
+
     },
   };
 }

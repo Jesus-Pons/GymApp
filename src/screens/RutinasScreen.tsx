@@ -19,6 +19,7 @@ import { useQuery, useRealm } from '@realm/react';
 // Importamos nuestros modelos y el enumerador de estado
 import { Routine, RoutineStatus } from '../models/Routine';
 import { Exercise } from '../models/Exercise';
+import { Serie } from '../models/Serie';
 
 // ==========================================
 // PALETA DE COLORES
@@ -66,7 +67,16 @@ export const RutinasScreen = () => {
   // --- Estados CRUD Ejercicios ---
   const [isExerciseModalVisible, setExerciseModalVisible] = useState(false);
   const [editingExercise, setEditingExercise] = useState<Exercise | null>(null);
-  const [exerciseForm, setExerciseForm] = useState({ name: '', series: '', reps: '', weight: '' });
+  const [exerciseForm, setExerciseForm] = useState({ name: '', seriesCount: '', reps: '', weight: '', descanso: '' });
+
+  const buildSeriesList = (count: number, reps: number, weight: number, completed = false) => {
+    return Array.from({ length: count }, () => ({
+      _id: new Realm.BSON.UUID(),
+      reps,
+      weight,
+      completed,
+    }));
+  };
 
   // ==========================================
   // LÓGICA PARA EMPEZAR A ENTRENAR
@@ -89,9 +99,13 @@ export const RutinasScreen = () => {
         const copiedEx = realm.create(Exercise, {
           _id: new Realm.BSON.UUID(), // IMPORTANTE: Nuevo ID para el ejercicio copiado
           name: ex.name,
-          series: ex.series,
-          reps: ex.reps,
-          weight: ex.weight,
+          descanso: ex.descanso,
+          series: ex.series.map((serie) => ({
+            _id: new Realm.BSON.UUID(),
+            reps: serie.reps,
+            weight: serie.weight,
+            completed: false,
+          })),
         });
         draftRoutine.exercises.push(copiedEx);
       });
@@ -143,6 +157,9 @@ export const RutinasScreen = () => {
       { text: 'Cancelar', style: 'cancel' },
       { text: 'Eliminar', style: 'destructive', onPress: () => {
         realm.write(() => {
+          routine.exercises.forEach((exercise) => {
+            realm.delete(exercise.series);
+          });
           realm.delete(routine.exercises); 
           realm.delete(routine);
         });
@@ -160,13 +177,14 @@ export const RutinasScreen = () => {
       setEditingExercise(exercise);
       setExerciseForm({
         name: exercise.name,
-        series: exercise.series.toString(),
-        reps: exercise.reps.toString(),
-        weight: exercise.weight.toString()
+        seriesCount: exercise.series.length.toString(),
+        reps: (exercise.series[0]?.reps ?? 0).toString(),
+        weight: (exercise.series[0]?.weight ?? 0).toString(),
+        descanso: exercise.descanso.toString(),
       });
     } else {
       setEditingExercise(null);
-      setExerciseForm({ name: '', series: '', reps: '', weight: '' });
+      setExerciseForm({ name: '', seriesCount: '3', reps: '10', weight: '0', descanso: '60' });
     }
     setExerciseModalVisible(true);
   };
@@ -179,16 +197,42 @@ export const RutinasScreen = () => {
     realm.write(() => {
       if (editingExercise) {
         editingExercise.name = exerciseForm.name;
-        editingExercise.series = parseInt(exerciseForm.series) || 0;
-        editingExercise.reps = parseInt(exerciseForm.reps) || 0;
-        editingExercise.weight = parseFloat(exerciseForm.weight) || 0;
+        editingExercise.descanso = parseInt(exerciseForm.descanso) || 0;
+
+        const targetCount = Math.max(1, parseInt(exerciseForm.seriesCount) || 0);
+        const reps = parseInt(exerciseForm.reps) || 0;
+        const weight = parseFloat(exerciseForm.weight) || 0;
+
+        while (editingExercise.series.length > targetCount) {
+          const lastSeries = editingExercise.series[editingExercise.series.length - 1];
+          realm.delete(lastSeries);
+        }
+
+        while (editingExercise.series.length < targetCount) {
+          editingExercise.series.push(
+            realm.create(Serie, {
+              _id: new Realm.BSON.UUID(),
+              reps,
+              weight,
+              completed: false,
+            })
+          );
+        }
+
+        editingExercise.series.forEach((serie) => {
+          serie.reps = reps;
+          serie.weight = weight;
+        });
       } else {
         const newExercise = realm.create(Exercise, {
           _id: new Realm.BSON.UUID(),
           name: exerciseForm.name,
-          series: parseInt(exerciseForm.series) || 0,
-          reps: parseInt(exerciseForm.reps) || 0,
-          weight: parseFloat(exerciseForm.weight) || 0,
+          descanso: parseInt(exerciseForm.descanso) || 0,
+          series: buildSeriesList(
+            Math.max(1, parseInt(exerciseForm.seriesCount) || 0),
+            parseInt(exerciseForm.reps) || 0,
+            parseFloat(exerciseForm.weight) || 0
+          ),
         });
         selectedRoutine.exercises.push(newExercise);
       }
@@ -201,6 +245,7 @@ export const RutinasScreen = () => {
       { text: 'Cancelar', style: 'cancel' },
       { text: 'Eliminar', style: 'destructive', onPress: () => {
         realm.write(() => {
+          realm.delete(exercise.series);
           realm.delete(exercise);
         });
         setExerciseModalVisible(false);
@@ -242,10 +287,10 @@ export const RutinasScreen = () => {
                 <Text style={styles.exerciseTitle}>{item.name}</Text>
               </View>
               <View style={styles.tagContainer}>
-                <View style={styles.dataTag}><Text style={styles.tagText}>{item.series} Ser</Text></View>
-                <View style={styles.dataTag}><Text style={styles.tagText}>{item.reps} Rep</Text></View>
-                {item.weight > 0 && (
-                  <View style={styles.dataTag}><Text style={styles.tagText}>{item.weight} kg</Text></View>
+                <View style={styles.dataTag}><Text style={styles.tagText}>{item.series.length} Ser</Text></View>
+                <View style={styles.dataTag}><Text style={styles.tagText}>{item.descanso} s</Text></View>
+                {item.series[0] && (
+                  <View style={styles.dataTag}><Text style={styles.tagText}>{item.series[0].reps} Rep x {item.series[0].weight} kg</Text></View>
                 )}
               </View>
             </TouchableOpacity>
@@ -262,10 +307,11 @@ export const RutinasScreen = () => {
               <Text style={styles.modalTitle}>{editingExercise ? 'Editar Ejercicio' : 'Nuevo Ejercicio'}</Text>
               <TextInput style={styles.input} placeholder="Nombre del ejercicio" value={exerciseForm.name} onChangeText={(t) => setExerciseForm({...exerciseForm, name: t})} />
               <View style={styles.rowInputs}>
-                <TextInput style={[styles.input, {flex: 1, marginRight: 5}]} placeholder="Series" keyboardType="numeric" value={exerciseForm.series} onChangeText={(t) => setExerciseForm({...exerciseForm, series: t})} />
+                  <TextInput style={[styles.input, {flex: 1, marginRight: 5}]} placeholder="Series" keyboardType="numeric" value={exerciseForm.seriesCount} onChangeText={(t) => setExerciseForm({...exerciseForm, seriesCount: t})} />
                 <TextInput style={[styles.input, {flex: 1, marginHorizontal: 5}]} placeholder="Reps" keyboardType="numeric" value={exerciseForm.reps} onChangeText={(t) => setExerciseForm({...exerciseForm, reps: t})} />
                 <TextInput style={[styles.input, {flex: 1, marginLeft: 5}]} placeholder="Peso (kg)" keyboardType="numeric" value={exerciseForm.weight} onChangeText={(t) => setExerciseForm({...exerciseForm, weight: t})} />
               </View>
+                <TextInput style={styles.input} placeholder="Descanso (segundos)" keyboardType="numeric" value={exerciseForm.descanso} onChangeText={(t) => setExerciseForm({...exerciseForm, descanso: t})} />
               <View style={styles.modalActionsRow}>
                 {editingExercise && (
                   <TouchableOpacity style={styles.deleteActionBtn} onPress={() => deleteExercise(editingExercise)}>
