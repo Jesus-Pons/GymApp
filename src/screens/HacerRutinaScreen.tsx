@@ -440,14 +440,13 @@ export const HacerRutinaScreen = () => {
       <Modal visible={isModalVisible} animationType="slide" transparent={true} onRequestClose={closeEditModal}>
         <KeyboardAvoidingView 
           behavior="padding" 
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20} 
           style={styles.modalOverlay}
         >
           <View style={styles.modalContent}>
             <ScrollView 
               showsVerticalScrollIndicator={false} 
               keyboardShouldPersistTaps="handled"
-              contentContainerStyle={{ flexGrow: 1 }} 
+              contentContainerStyle={{ flexGrow: 1, paddingBottom: 30 }} 
             >
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>

@@ -9,7 +9,9 @@ import {
   TextInput,
   Modal,
   Alert,
-  ScrollView
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -512,7 +514,10 @@ export const RutinasScreen = () => {
 
         {/* MODAL EJERCICIOS */}
         <Modal visible={isExerciseModalVisible} transparent animationType="fade">
-          <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView 
+            behavior="padding" 
+            style={styles.modalOverlay}
+          >
             <View style={styles.modalContent}>
               <ScrollView
                 showsVerticalScrollIndicator={false}
@@ -604,12 +609,15 @@ export const RutinasScreen = () => {
                 </View>
               </View>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         {/* MODAL EDITAR RUTINA */}
         <Modal visible={isRoutineModalVisible} transparent animationType="fade">
-            <View style={styles.modalOverlay}>
+            <KeyboardAvoidingView 
+              behavior="padding" 
+              style={styles.modalOverlay}
+            >
                 <View style={styles.modalContent}>
                     <Text style={styles.modalTitle}>Editar Nombre Rutina</Text>
                     <TextInput style={styles.input} placeholder="Nombre de la rutina" value={routineName} onChangeText={setRoutineName} autoFocus />
@@ -623,7 +631,7 @@ export const RutinasScreen = () => {
                         </TouchableOpacity>
                     </View>
                 </View>
-            </View>
+            </KeyboardAvoidingView>
         </Modal>
       </SafeAreaView>
     );
@@ -676,7 +684,10 @@ export const RutinasScreen = () => {
 
       {/* MODAL CREAR/EDITAR RUTINA */}
       <Modal visible={isRoutineModalVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView 
+          behavior="padding" 
+          style={styles.modalOverlay}
+        >
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>{editingRoutine ? 'Editar Rutina' : 'Nueva Rutina'}</Text>
             <TextInput style={styles.input} placeholder="Nombre de la rutina" value={routineName} onChangeText={setRoutineName} autoFocus />
@@ -690,7 +701,7 @@ export const RutinasScreen = () => {
                 </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
     </SafeAreaView>
@@ -759,7 +770,7 @@ const styles = StyleSheet.create({
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 },
   modalContent: { backgroundColor: COLORS.cardBg, borderRadius: 16, padding: 24, elevation: 10, maxHeight: '90%' },
-  modalScrollContent: { paddingBottom: 8 },
+  modalScrollContent: { paddingBottom: 30 },
   modalFooter: { borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: 12, marginTop: 4 },
   modalTitle: { fontSize: 22, fontWeight: 'bold', marginBottom: 20, color: COLORS.text },
   inputGroup: { marginBottom: 16 },
