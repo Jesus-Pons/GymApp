@@ -1,5 +1,5 @@
 import Realm from "realm";
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
   Text, 
@@ -8,10 +8,12 @@ import {
   TouchableOpacity,
   TextInput,
   Modal,
-  Alert
+  Alert,
+  ScrollView
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import Swipeable from 'react-native-gesture-handler/Swipeable';
 
 // Importamos los hooks de Realm
 import { useQuery, useRealm } from '@realm/react';
@@ -20,6 +22,54 @@ import { useQuery, useRealm } from '@realm/react';
 import { Routine, RoutineStatus } from '../models/Routine';
 import { Exercise } from '../models/Exercise';
 import { Serie } from '../models/Serie';
+
+type SeriesFormItem = {
+  reps: string;
+  weight: string;
+};
+
+const MAX_SERIES = 10;
+const MIN_SERIES = 1;
+const REST_STEP = 15;
+
+type NumberStepperProps = {
+  label: string;
+  valueText: string;
+  onChangeText: (text: string) => void;
+  onDecrement: () => void;
+  onIncrement: () => void;
+  suffix?: string;
+  onBlur?: () => void;
+};
+
+const NumberStepper = ({ label, valueText, onChangeText, onDecrement, onIncrement, suffix, onBlur }: NumberStepperProps) => {
+  return (
+    <View style={styles.stepperBlock}>
+      {!!label && <Text style={styles.inputLabel}>{label}</Text>}
+      <View style={styles.stepperRow}>
+        <TouchableOpacity style={styles.stepperButton} onPress={onDecrement}>
+          <Text style={styles.stepperButtonText}>-</Text>
+        </TouchableOpacity>
+
+        <View style={styles.stepperInputWrap}>
+          <TextInput
+            style={styles.stepperInput}
+            value={valueText}
+            onChangeText={onChangeText}
+            onBlur={onBlur}
+            keyboardType="numeric"
+            textAlign="center"
+          />
+          {!!suffix && <Text style={styles.stepperSuffix}>{suffix}</Text>}
+        </View>
+
+        <TouchableOpacity style={styles.stepperButton} onPress={onIncrement}>
+          <Text style={styles.stepperButtonText}>+</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+};
 
 // ==========================================
 // PALETA DE COLORES
@@ -67,13 +117,112 @@ export const RutinasScreen = () => {
   // --- Estados CRUD Ejercicios ---
   const [isExerciseModalVisible, setExerciseModalVisible] = useState(false);
   const [editingExercise, setEditingExercise] = useState<Exercise | null>(null);
-  const [exerciseForm, setExerciseForm] = useState({ name: '', seriesCount: '', reps: '', weight: '', descanso: '' });
+  const [exerciseForm, setExerciseForm] = useState({ name: '', seriesCount: '', descanso: '' });
+  const [seriesForm, setSeriesForm] = useState<SeriesFormItem[]>([]);
+  const swipeablesRef = useRef<Map<string, any>>(new Map());
 
-  const buildSeriesList = (count: number, reps: number, weight: number, completed = false) => {
-    return Array.from({ length: count }, () => ({
+  const sanitizeIntText = (value: string) => value.replace(/[^0-9]/g, '');
+
+  const sanitizeWeightText = (value: string) => {
+    const sanitized = value.replace(/[^0-9.,]/g, '').replace(',', '.');
+    const firstDot = sanitized.indexOf('.');
+
+    if (firstDot === -1) {
+      return sanitized;
+    }
+
+    return sanitized.slice(0, firstDot + 1) + sanitized.slice(firstDot + 1).replace(/\./g, '');
+  };
+
+  const getSeriesCountValue = () => {
+    const parsed = parseInt(exerciseForm.seriesCount, 10);
+    if (isNaN(parsed)) return MIN_SERIES;
+    return Math.max(MIN_SERIES, Math.min(MAX_SERIES, parsed));
+  };
+
+  const getRestValue = () => {
+    const parsed = parseInt(exerciseForm.descanso, 10);
+    if (isNaN(parsed)) return 0;
+    return Math.max(0, parsed);
+  };
+
+  const setSeriesCountValue = (nextValue: number) => {
+    const clamped = Math.max(MIN_SERIES, Math.min(MAX_SERIES, nextValue));
+    setExerciseForm((current) => ({ ...current, seriesCount: String(clamped) }));
+    normalizeSeriesCount(String(clamped));
+  };
+
+  const setRestValue = (nextValue: number) => {
+    const safeValue = Math.max(0, nextValue);
+    setExerciseForm((current) => ({ ...current, descanso: String(safeValue) }));
+  };
+
+  const handleSeriesCountTextChange = (value: string) => {
+    const sanitized = sanitizeIntText(value);
+
+    if (!sanitized) {
+      setExerciseForm((current) => ({ ...current, seriesCount: '' }));
+      setSeriesForm([]);
+      return;
+    }
+
+    const clamped = Math.max(MIN_SERIES, Math.min(MAX_SERIES, parseInt(sanitized, 10)));
+    setExerciseForm((current) => ({ ...current, seriesCount: String(clamped) }));
+    normalizeSeriesCount(String(clamped));
+  };
+
+  const handleRestTextChange = (value: string) => {
+    const sanitized = sanitizeIntText(value);
+    setExerciseForm((current) => ({ ...current, descanso: sanitized }));
+  };
+
+  const snapRestToStep = () => {
+    const current = parseInt(exerciseForm.descanso, 10);
+    const safeCurrent = isNaN(current) ? 0 : Math.max(0, current);
+    const snapped = Math.round(safeCurrent / REST_STEP) * REST_STEP;
+    setRestValue(snapped);
+  };
+
+  const updateSeriesNumber = (index: number, field: keyof SeriesFormItem, value: number) => {
+    const safeValue = Math.max(0, value);
+    setSeriesForm((current) =>
+      current.map((item, itemIndex) =>
+        itemIndex === index
+          ? { ...item, [field]: String(safeValue) }
+          : item
+      )
+    );
+  };
+
+  const normalizeSeriesCount = (countText: string) => {
+    const count = parseInt(countText, 10);
+
+    if (isNaN(count) || count < MIN_SERIES) {
+      return;
+    }
+
+    const cappedCount = Math.min(count, MAX_SERIES);
+
+    if (cappedCount !== count) {
+      setExerciseForm((current) => ({ ...current, seriesCount: String(MAX_SERIES) }));
+    }
+
+    setSeriesForm((current) => {
+      const lastSeries = current[current.length - 1] ?? { reps: '', weight: '' };
+
+      return Array.from({ length: cappedCount }, (_, index) => current[index] ?? lastSeries)
+        .map((serie) => ({
+          reps: serie.reps,
+          weight: serie.weight,
+        }));
+    });
+  };
+
+  const buildSeriesList = (seriesData: SeriesFormItem[], completed = false) => {
+    return seriesData.map((serie) => ({
       _id: new Realm.BSON.UUID(),
-      reps,
-      weight,
+      reps: parseInt(serie.reps, 10) || 0,
+      weight: parseFloat(serie.weight.replace(',', '.')) || 0,
       completed,
     }));
   };
@@ -178,13 +327,18 @@ export const RutinasScreen = () => {
       setExerciseForm({
         name: exercise.name,
         seriesCount: exercise.series.length.toString(),
-        reps: (exercise.series[0]?.reps ?? 0).toString(),
-        weight: (exercise.series[0]?.weight ?? 0).toString(),
         descanso: exercise.descanso.toString(),
       });
+      setSeriesForm(
+        exercise.series.map((serie) => ({
+          reps: serie.reps.toString(),
+          weight: serie.weight.toString(),
+        }))
+      );
     } else {
       setEditingExercise(null);
-      setExerciseForm({ name: '', seriesCount: '3', reps: '10', weight: '0', descanso: '60' });
+      setExerciseForm({ name: '', seriesCount: String(MIN_SERIES), descanso: '0' });
+      setSeriesForm([{ reps: '0', weight: '0' }]);
     }
     setExerciseModalVisible(true);
   };
@@ -194,14 +348,23 @@ export const RutinasScreen = () => {
       return Alert.alert('Error', 'El nombre del ejercicio es obligatorio');
     }
 
+    const targetCount = Math.max(MIN_SERIES, Math.min(MAX_SERIES, parseInt(exerciseForm.seriesCount) || 0));
+    const descanso = parseInt(exerciseForm.descanso) || 0;
+    const invalidSeries = seriesForm.some((serie) => {
+      const reps = parseInt(serie.reps, 10);
+      const weight = parseFloat(serie.weight.replace(',', '.'));
+
+      return isNaN(reps) || isNaN(weight) || reps < 0 || weight < 0;
+    });
+
+    if (seriesForm.length !== targetCount || invalidSeries) {
+      return Alert.alert('Error', 'Revisa los datos de cada serie.');
+    }
+
     realm.write(() => {
       if (editingExercise) {
         editingExercise.name = exerciseForm.name;
-        editingExercise.descanso = parseInt(exerciseForm.descanso) || 0;
-
-        const targetCount = Math.max(1, parseInt(exerciseForm.seriesCount) || 0);
-        const reps = parseInt(exerciseForm.reps) || 0;
-        const weight = parseFloat(exerciseForm.weight) || 0;
+        editingExercise.descanso = descanso;
 
         while (editingExercise.series.length > targetCount) {
           const lastSeries = editingExercise.series[editingExercise.series.length - 1];
@@ -209,30 +372,29 @@ export const RutinasScreen = () => {
         }
 
         while (editingExercise.series.length < targetCount) {
+          const seriesIndex = editingExercise.series.length;
+          const seriesData = seriesForm[seriesIndex] ?? seriesForm[seriesForm.length - 1];
           editingExercise.series.push(
             realm.create(Serie, {
               _id: new Realm.BSON.UUID(),
-              reps,
-              weight,
+              reps: parseInt(seriesData.reps, 10) || 0,
+              weight: parseFloat(seriesData.weight.replace(',', '.')) || 0,
               completed: false,
             })
           );
         }
 
-        editingExercise.series.forEach((serie) => {
-          serie.reps = reps;
-          serie.weight = weight;
+        editingExercise.series.forEach((serie, index) => {
+          const seriesData = seriesForm[index] ?? seriesForm[seriesForm.length - 1];
+          serie.reps = parseInt(seriesData.reps, 10) || 0;
+          serie.weight = parseFloat(seriesData.weight.replace(',', '.')) || 0;
         });
       } else {
         const newExercise = realm.create(Exercise, {
           _id: new Realm.BSON.UUID(),
           name: exerciseForm.name,
-          descanso: parseInt(exerciseForm.descanso) || 0,
-          series: buildSeriesList(
-            Math.max(1, parseInt(exerciseForm.seriesCount) || 0),
-            parseInt(exerciseForm.reps) || 0,
-            parseFloat(exerciseForm.weight) || 0
-          ),
+          descanso,
+          series: buildSeriesList(seriesForm),
         });
         selectedRoutine.exercises.push(newExercise);
       }
@@ -241,16 +403,29 @@ export const RutinasScreen = () => {
   };
 
   const deleteExercise = (exercise: Exercise) => {
-    Alert.alert('Eliminar', `¿Seguro que quieres eliminar "${exercise.name}"?`, [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Eliminar', style: 'destructive', onPress: () => {
-        realm.write(() => {
-          realm.delete(exercise.series);
-          realm.delete(exercise);
-        });
-        setExerciseModalVisible(false);
-      }}
-    ]);
+    realm.write(() => {
+      realm.delete(exercise.series);
+      realm.delete(exercise);
+    });
+    setExerciseModalVisible(false);
+  };
+
+  const renderExerciseSwipeAction = (exercise: Exercise) => (
+    <TouchableOpacity
+      style={styles.swipeDeleteAction}
+      onPress={() => deleteExercise(exercise)}
+      activeOpacity={0.85}
+    >
+      <Text style={styles.swipeDeleteText}>Eliminar</Text>
+    </TouchableOpacity>
+  );
+
+  const closeAllSwipeables = (exceptId?: string) => {
+    swipeablesRef.current.forEach((ref, id) => {
+      if (id !== exceptId && ref) {
+        ref.close();
+      }
+    });
   };
 
   // ==========================================
@@ -260,7 +435,13 @@ export const RutinasScreen = () => {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => setSelectedRoutine(null)} style={styles.backButton}>
+          <TouchableOpacity 
+            onPress={() => {
+              closeAllSwipeables();
+              setSelectedRoutine(null);
+            }} 
+            style={styles.backButton}
+          >
             <Text style={styles.backButtonText}>{'<'}</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => openRoutineModal(selectedRoutine)} style={styles.headerTitleContainer}>
@@ -268,10 +449,22 @@ export const RutinasScreen = () => {
           </TouchableOpacity>
           
           <View style={styles.headerRightActions}>
-            <TouchableOpacity style={styles.iconButton} onPress={() => deleteRoutine(selectedRoutine)}>
+            <TouchableOpacity 
+              style={styles.iconButton} 
+              onPress={() => {
+                closeAllSwipeables();
+                deleteRoutine(selectedRoutine);
+              }}
+            >
               <Text style={styles.iconButtonText}>🗑️</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.addButtonMinimal} onPress={() => openExerciseModal()}>
+            <TouchableOpacity 
+              style={styles.addButtonMinimal} 
+              onPress={() => {
+                closeAllSwipeables();
+                openExerciseModal();
+              }}
+            >
               <Text style={styles.addButtonTextMinimal}>+ Añadir</Text>
             </TouchableOpacity>
           </View>
@@ -281,19 +474,39 @@ export const RutinasScreen = () => {
           data={selectedRoutine.exercises}
           keyExtractor={(item) => item._id.toHexString()}
           contentContainerStyle={{ paddingBottom: 20 }}
+          onScroll={() => closeAllSwipeables()}
+          scrollEventThrottle={16}
           renderItem={({ item }) => (
-            <TouchableOpacity onPress={() => openExerciseModal(item)} activeOpacity={0.7} style={styles.exerciseItem}>
-              <View style={styles.exerciseHeader}>
-                <Text style={styles.exerciseTitle}>{item.name}</Text>
-              </View>
-              <View style={styles.tagContainer}>
-                <View style={styles.dataTag}><Text style={styles.tagText}>{item.series.length} Ser</Text></View>
-                <View style={styles.dataTag}><Text style={styles.tagText}>{item.descanso} s</Text></View>
-                {item.series[0] && (
-                  <View style={styles.dataTag}><Text style={styles.tagText}>{item.series[0].reps} Rep x {item.series[0].weight} kg</Text></View>
-                )}
-              </View>
-            </TouchableOpacity>
+            <Swipeable
+              ref={(ref) => {
+                if (ref) {
+                  swipeablesRef.current.set(item._id.toHexString(), ref);
+                }
+              }}
+              onSwipeableOpen={() => closeAllSwipeables(item._id.toHexString())}
+              renderRightActions={() => renderExerciseSwipeAction(item)}
+              overshootRight={false}
+            >
+              <TouchableOpacity 
+                onPress={() => {
+                  closeAllSwipeables();
+                  openExerciseModal(item);
+                }} 
+                activeOpacity={0.7} 
+                style={styles.exerciseItem}
+              >
+                <View style={styles.exerciseHeader}>
+                  <Text style={styles.exerciseTitle}>{item.name}</Text>
+                </View>
+                <View style={styles.tagContainer}>
+                  <View style={styles.dataTag}><Text style={styles.tagText}>{item.series.length} Ser</Text></View>
+                  <View style={styles.dataTag}><Text style={styles.tagText}>{item.descanso} s</Text></View>
+                  {item.series[0] && (
+                    <View style={styles.dataTag}><Text style={styles.tagText}>{item.series[0].reps} Rep x {item.series[0].weight} kg</Text></View>
+                  )}
+                </View>
+              </TouchableOpacity>
+            </Swipeable>
           )}
           ListEmptyComponent={
             <Text style={styles.emptyText}>No hay ejercicios en esta rutina aún.</Text>
@@ -304,27 +517,93 @@ export const RutinasScreen = () => {
         <Modal visible={isExerciseModalVisible} transparent animationType="fade">
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>{editingExercise ? 'Editar Ejercicio' : 'Nuevo Ejercicio'}</Text>
-              <TextInput style={styles.input} placeholder="Nombre del ejercicio" value={exerciseForm.name} onChangeText={(t) => setExerciseForm({...exerciseForm, name: t})} />
-              <View style={styles.rowInputs}>
-                  <TextInput style={[styles.input, {flex: 1, marginRight: 5}]} placeholder="Series" keyboardType="numeric" value={exerciseForm.seriesCount} onChangeText={(t) => setExerciseForm({...exerciseForm, seriesCount: t})} />
-                <TextInput style={[styles.input, {flex: 1, marginHorizontal: 5}]} placeholder="Reps" keyboardType="numeric" value={exerciseForm.reps} onChangeText={(t) => setExerciseForm({...exerciseForm, reps: t})} />
-                <TextInput style={[styles.input, {flex: 1, marginLeft: 5}]} placeholder="Peso (kg)" keyboardType="numeric" value={exerciseForm.weight} onChangeText={(t) => setExerciseForm({...exerciseForm, weight: t})} />
-              </View>
-                <TextInput style={styles.input} placeholder="Descanso (segundos)" keyboardType="numeric" value={exerciseForm.descanso} onChangeText={(t) => setExerciseForm({...exerciseForm, descanso: t})} />
-              <View style={styles.modalActionsRow}>
-                {editingExercise && (
-                  <TouchableOpacity style={styles.deleteActionBtn} onPress={() => deleteExercise(editingExercise)}>
-                    <Text style={styles.deleteActionText}>Eliminar</Text>
-                  </TouchableOpacity>
-                )}
-                <View style={styles.modalActionsGroup}>
-                  <TouchableOpacity style={styles.cancelBtn} onPress={() => setExerciseModalVisible(false)}>
-                    <Text style={styles.cancelBtnText}>Cancelar</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.saveBtn} onPress={saveExercise}>
-                    <Text style={styles.saveBtnText}>Guardar</Text>
-                  </TouchableOpacity>
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.modalScrollContent}
+              >
+                <Text style={styles.modalTitle}>{editingExercise ? 'Editar Ejercicio' : 'Nuevo Ejercicio'}</Text>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Nombre del ejercicio</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Ej: Press banca"
+                    value={exerciseForm.name}
+                    onChangeText={(t) => setExerciseForm({...exerciseForm, name: t})}
+                  />
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <NumberStepper
+                    label="Series"
+                    valueText={exerciseForm.seriesCount || ''}
+                    onChangeText={handleSeriesCountTextChange}
+                    onDecrement={() => setSeriesCountValue(getSeriesCountValue() - 1)}
+                    onIncrement={() => setSeriesCountValue(getSeriesCountValue() + 1)}
+                  />
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <NumberStepper
+                    label="Descanso (segundos)"
+                    valueText={exerciseForm.descanso || '0'}
+                    onChangeText={handleRestTextChange}
+                    onBlur={snapRestToStep}
+                    onDecrement={() => setRestValue(getRestValue() - REST_STEP)}
+                    onIncrement={() => setRestValue(getRestValue() + REST_STEP)}
+                  />
+                </View>
+
+                <View style={styles.seriesEditorList}>
+                  {seriesForm.map((serie, index) => (
+                    <View key={`${index}-${exerciseForm.seriesCount}`} style={styles.seriesEditorCard}>
+                      <Text style={styles.seriesEditorTitle}>Serie {index + 1}</Text>
+                      <View style={styles.rowInputs}>
+                        <View style={[styles.inputGroup, { flex: 1, marginRight: 5 }]}>
+                          <NumberStepper
+                            label="Reps"
+                            valueText={serie.reps}
+                            onChangeText={(value) => {
+                              const sanitized = sanitizeIntText(value);
+                              setSeriesForm((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, reps: sanitized } : item));
+                            }}
+                            onDecrement={() => updateSeriesNumber(index, 'reps', (parseInt(serie.reps, 10) || 0) - 1)}
+                            onIncrement={() => updateSeriesNumber(index, 'reps', (parseInt(serie.reps, 10) || 0) + 1)}
+                          />
+                        </View>
+                        <View style={[styles.inputGroup, { flex: 1, marginLeft: 5 }]}>
+                          <NumberStepper
+                            label="Peso (kg)"
+                            valueText={serie.weight}
+                            onChangeText={(value) => {
+                              const sanitized = sanitizeWeightText(value);
+                              setSeriesForm((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, weight: sanitized } : item));
+                            }}
+                            onDecrement={() => updateSeriesNumber(index, 'weight', Math.round((parseFloat(serie.weight.replace(',', '.')) || 0) - 1))}
+                            onIncrement={() => updateSeriesNumber(index, 'weight', Math.round((parseFloat(serie.weight.replace(',', '.')) || 0) + 1))}
+                          />
+                        </View>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
+
+              <View style={styles.modalFooter}>
+                <View style={styles.modalActionsRow}>
+                  {editingExercise && (
+                    <TouchableOpacity style={styles.deleteActionBtn} onPress={() => deleteExercise(editingExercise)}>
+                      <Text style={styles.deleteActionText}>Eliminar</Text>
+                    </TouchableOpacity>
+                  )}
+                  <View style={styles.modalActionsGroup}>
+                    <TouchableOpacity style={styles.cancelBtn} onPress={() => setExerciseModalVisible(false)}>
+                      <Text style={styles.cancelBtnText}>Cancelar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.saveBtn} onPress={saveExercise}>
+                      <Text style={styles.saveBtnText}>Guardar</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
             </View>
@@ -476,17 +755,33 @@ const styles = StyleSheet.create({
   tagContainer: { flexDirection: 'row' },
   dataTag: { backgroundColor: COLORS.tagBg, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, marginRight: 8 },
   tagText: { color: COLORS.subText, fontSize: 13, fontWeight: '600' },
+  swipeDeleteAction: { backgroundColor: COLORS.danger, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 22 },
+  swipeDeleteText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
 
   emptyText: { textAlign: 'center', marginTop: 60, color: COLORS.subText, fontSize: 16, paddingHorizontal: 40 },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 },
-  modalContent: { backgroundColor: COLORS.cardBg, borderRadius: 16, padding: 24, elevation: 10 },
+  modalContent: { backgroundColor: COLORS.cardBg, borderRadius: 16, padding: 24, elevation: 10, maxHeight: '90%' },
+  modalScrollContent: { paddingBottom: 8 },
+  modalFooter: { borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: 12, marginTop: 4 },
   modalTitle: { fontSize: 22, fontWeight: 'bold', marginBottom: 20, color: COLORS.text },
+  inputGroup: { marginBottom: 16 },
+  inputLabel: { color: COLORS.text, fontSize: 14, fontWeight: '700', marginBottom: 8 },
   input: { 
     backgroundColor: COLORS.bg, borderWidth: 1, borderColor: COLORS.border, 
     borderRadius: 8, padding: 14, fontSize: 16, marginBottom: 15, color: COLORS.text
   },
   rowInputs: { flexDirection: 'row', justifyContent: 'space-between' },
+  stepperBlock: { marginBottom: 0 },
+  stepperRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.bg, borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 8 },
+  stepperButton: { width: 36, height: 36, borderRadius: 8, backgroundColor: '#E6EEF8', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  stepperButtonText: { color: COLORS.primary, fontSize: 20, fontWeight: '700', marginTop: -1 },
+  stepperInputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginHorizontal: 8 },
+  stepperInput: { flex: 1, color: COLORS.text, fontSize: 20, fontWeight: '500', textAlign: 'center', paddingVertical: 0, minWidth: 24 },
+  stepperSuffix: { color: COLORS.text, fontSize: 16, fontWeight: '500', marginLeft: 4 },
+  seriesEditorList: { marginBottom: 4 },
+  seriesEditorCard: { backgroundColor: COLORS.bg, borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, padding: 12, marginBottom: 12 },
+  seriesEditorTitle: { fontSize: 15, fontWeight: '700', color: COLORS.text, marginBottom: 10 },
   
   modalActionsRow: { 
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 15 

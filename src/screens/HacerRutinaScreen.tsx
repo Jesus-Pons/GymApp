@@ -3,11 +3,19 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, Modal, TextI
 import { useRealm, useQuery } from '@realm/react';
 import { useNavigation, CommonActions } from '@react-navigation/native';
 import Realm from 'realm';
+import { BlurView } from 'expo-blur';
 
 import { Routine, RoutineStatus } from '../models/Routine';
 import { HistoryRoutine } from '../models/HistoryRoutine';
 import { Exercise } from '../models/Exercise';
 import { Serie } from '../models/Serie';
+
+type SeriesFormItem = {
+  reps: string;
+  weight: string;
+};
+
+const MAX_SERIES = 10;
 
 export const HacerRutinaScreen = () => {
   const realm = useRealm();
@@ -26,11 +34,55 @@ export const HacerRutinaScreen = () => {
   
   const [editName, setEditName] = useState('');
   const [editSeriesCount, setEditSeriesCount] = useState('');
-  const [editReps, setEditReps] = useState('');
-  const [editWeight, setEditWeight] = useState('');
   const [editRest, setEditRest] = useState('');
+  const [editSeries, setEditSeries] = useState<SeriesFormItem[]>([]);
+
+  // --- ESTADO DEL TEMPORIZADOR ---
+  const [activeRestId, setActiveRestId] = useState<string | null>(null);
+  const [restTimeRemaining, setRestTimeRemaining] = useState(0);
 
   const isFinishing = useRef(false);
+
+  // --- TEMPORIZADOR DE DESCANSO ---
+  useEffect(() => {
+    if (activeRestId === null) {
+      return;
+    }
+
+    if (restTimeRemaining <= 0) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setRestTimeRemaining((prev) => {
+        const next = prev - 1;
+        if (next <= 0) {
+          return 0;
+        }
+        return next;
+      });
+    }, 1000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [activeRestId]);
+
+  // Cerrar temporizador automáticamente cuando llega a 0
+  useEffect(() => {
+    if (restTimeRemaining === 0 && activeRestId !== null) {
+      const timer = setTimeout(() => {
+        setActiveRestId(null);
+        setRestTimeRemaining(0);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [restTimeRemaining, activeRestId]);
+
+  const skipRestTimer = () => {
+    setActiveRestId(null);
+    setRestTimeRemaining(0);
+  };
 
   const clearDraftRoutines = () => {
     const allDrafts = realm.objects(Routine).filtered('status == $0', RoutineStatus.DRAFT);
@@ -57,27 +109,63 @@ export const HacerRutinaScreen = () => {
     })),
   });
 
-  const syncExerciseSeries = (exercise: Exercise, seriesCount: number, reps: number, weight: number) => {
-    while (exercise.series.length > seriesCount) {
+  const normalizeSeriesCount = (countText: string) => {
+    const count = parseInt(countText, 10);
+
+    if (isNaN(count) || count < 1) {
+      return;
+    }
+
+    const cappedCount = Math.min(count, MAX_SERIES);
+
+    if (cappedCount !== count) {
+      setEditSeriesCount(String(MAX_SERIES));
+    }
+
+    setEditSeries((current) => {
+      const lastSeries = current[current.length - 1] ?? { reps: '', weight: '' };
+
+      return Array.from({ length: cappedCount }, (_, index) => current[index] ?? lastSeries)
+        .map((serie) => ({
+          reps: serie.reps,
+          weight: serie.weight,
+        }));
+    });
+  };
+
+  const syncExerciseSeries = (exercise: Exercise, seriesData: SeriesFormItem[]) => {
+    while (exercise.series.length > seriesData.length) {
       const lastSeries = exercise.series[exercise.series.length - 1];
       realm.delete(lastSeries);
     }
 
-    while (exercise.series.length < seriesCount) {
+    while (exercise.series.length < seriesData.length) {
+      const seriesIndex = exercise.series.length;
+      const seriesForm = seriesData[seriesIndex] ?? seriesData[seriesData.length - 1];
       exercise.series.push(
         realm.create(Serie, {
           _id: new Realm.BSON.UUID(),
-          reps,
-          weight,
+          reps: parseInt(seriesForm.reps, 10) || 0,
+          weight: parseFloat(seriesForm.weight.replace(',', '.')) || 0,
           completed: false,
         })
       );
     }
 
-    exercise.series.forEach((serie) => {
-      serie.reps = reps;
-      serie.weight = weight;
+    exercise.series.forEach((serie, index) => {
+      const seriesForm = seriesData[index] ?? seriesData[seriesData.length - 1];
+      serie.reps = parseInt(seriesForm.reps, 10) || 0;
+      serie.weight = parseFloat(seriesForm.weight.replace(',', '.')) || 0;
     });
+  };
+
+  const buildSeriesList = (seriesData: SeriesFormItem[]) => {
+    return seriesData.map((serie) => ({
+      _id: new Realm.BSON.UUID(),
+      reps: parseInt(serie.reps, 10) || 0,
+      weight: parseFloat(serie.weight.replace(',', '.')) || 0,
+      completed: false,
+    }));
   };
 
   // --- INTERCEPTAR NAVEGACIÓN ---
@@ -193,66 +281,63 @@ export const HacerRutinaScreen = () => {
       return;
     }
 
-    // --- GUARDADO NORMAL ---
-    Alert.alert(
-      "Finalizar Entrenamiento",
-      "¡Buen trabajo! ¿Guardamos el entrenamiento?",
-      [
-        { text: "Cancelar", style: "cancel" },
-        {
-          text: "Sí, finalizar",
-          style: "default",
-          onPress: () => {
-            const endTime = new Date();
-            const durationMs = startTime ? endTime.getTime() - startTime.getTime() : 60000;
-            const durationMinutes = Math.max(1, Math.floor(durationMs / 60000));
+    const endTime = new Date();
+    const durationMs = startTime ? endTime.getTime() - startTime.getTime() : 60000;
+    const durationMinutes = Math.max(1, Math.floor(durationMs / 60000));
 
-            realm.write(() => {
-              const historyRoutine = realm.create(HistoryRoutine, {
-                _id: new Realm.BSON.UUID(),
-                originalRoutineId: activeRoutine._id.toHexString(),
-                name: activeRoutine.name,
-                exercises: [],
-                createdAt: activeRoutine.createdAt,
-                completedAt: endTime,
-                durationMinutes: durationMinutes,
-              });
+    realm.write(() => {
+      const historyRoutine = realm.create(HistoryRoutine, {
+        _id: new Realm.BSON.UUID(),
+        originalRoutineId: activeRoutine._id.toHexString(),
+        name: activeRoutine.name,
+        exercises: [],
+        createdAt: activeRoutine.createdAt,
+        completedAt: endTime,
+        durationMinutes: durationMinutes,
+      });
 
-              activeRoutine.exercises.forEach((exercise) => {
-                historyRoutine.exercises.push(
-                  realm.create(Exercise, cloneExerciseData(exercise))
-                );
-              });
+      activeRoutine.exercises.forEach((exercise) => {
+        historyRoutine.exercises.push(
+          realm.create(Exercise, cloneExerciseData(exercise))
+        );
+      });
 
-              activeRoutine.exercises.forEach((exercise) => {
-                realm.delete(exercise.series);
-              });
+      activeRoutine.exercises.forEach((exercise) => {
+        realm.delete(exercise.series);
+      });
 
-              realm.delete(activeRoutine.exercises);
-              realm.delete(activeRoutine);
-            });
+      realm.delete(activeRoutine.exercises);
+      realm.delete(activeRoutine);
+    });
 
-            setStartTime(null);
-            
-            isFinishing.current = true;
-            navigation.dispatch(
-              CommonActions.reset({
-                index: 0,
-                routes: [{ name: 'RutinasList' }],
-              })
-            );
-            
-            navigation.navigate('Historial' as never);
-          }
-        }
-      ]
+    setStartTime(null);
+
+    isFinishing.current = true;
+    navigation.dispatch(
+      CommonActions.reset({
+        index: 0,
+        routes: [{ name: 'RutinasList' }],
+      })
     );
+
+    navigation.navigate('Historial' as never);
   };
 
-  const toggleSerieComplete = (serie: Serie) => {
+  const toggleSerieComplete = (serie: Serie, exercise: Exercise) => {
+    // Capturar valores ANTES de escribir en Realm
+    const serieId = serie._id.toHexString();
+    const descanso = exercise.descanso;
+    const wasCompleted = serie.completed;
+
     realm.write(() => {
       serie.completed = !serie.completed;
     });
+
+    // Si la serie acaba de completarse, inicia el temporizador
+    if (!wasCompleted && descanso > 0) {
+      setActiveRestId(serieId);
+      setRestTimeRemaining(descanso);
+    }
   };
 
   // --- GESTIÓN DE EJERCICIOS (MODAL) ---
@@ -261,8 +346,12 @@ export const HacerRutinaScreen = () => {
     setSelectedExercise(exercise);
     setEditName(exercise.name);
     setEditSeriesCount(exercise.series.length.toString());
-    setEditReps((exercise.series[0]?.reps ?? 0).toString());
-    setEditWeight((exercise.series[0]?.weight ?? 0).toString());
+    setEditSeries(
+      exercise.series.map((serie) => ({
+        reps: serie.reps.toString(),
+        weight: serie.weight.toString(),
+      }))
+    );
     setEditRest(exercise.descanso.toString());
     setIsModalVisible(true);
   };
@@ -271,10 +360,9 @@ export const HacerRutinaScreen = () => {
     setModalMode('create');
     setSelectedExercise(null);
     setEditName('');
-    setEditSeriesCount('3');
-    setEditReps('10');
-    setEditWeight('0');
-    setEditRest('60');
+    setEditSeriesCount('');
+    setEditSeries([]);
+    setEditRest('');
     setIsModalVisible(true);
   };
 
@@ -289,12 +377,16 @@ export const HacerRutinaScreen = () => {
       return;
     }
 
-    const numSeries = parseInt(editSeriesCount, 10);
-    const numReps = parseInt(editReps, 10);
-    const numWeight = parseFloat(editWeight.replace(',', '.'));
+    const numSeries = Math.min(MAX_SERIES, parseInt(editSeriesCount, 10));
     const numRest = parseInt(editRest, 10);
+    const invalidSeries = editSeries.some((serie) => {
+      const reps = parseInt(serie.reps, 10);
+      const weight = parseFloat(serie.weight.replace(',', '.'));
 
-    if (isNaN(numSeries) || isNaN(numReps) || isNaN(numWeight) || isNaN(numRest) || numSeries < 1 || numReps < 0 || numWeight < 0 || numRest < 0) {
+      return isNaN(reps) || isNaN(weight) || reps < 0 || weight < 0;
+    });
+
+    if (isNaN(numSeries) || isNaN(numRest) || numSeries < 1 || numRest < 0 || invalidSeries || editSeries.length !== numSeries) {
       Alert.alert("Datos inválidos", "Por favor, introduce números válidos.");
       return;
     }
@@ -303,18 +395,13 @@ export const HacerRutinaScreen = () => {
       if (modalMode === 'edit' && selectedExercise) {
         selectedExercise.name = editName;
         selectedExercise.descanso = numRest;
-        syncExerciseSeries(selectedExercise, numSeries, numReps, numWeight);
+        syncExerciseSeries(selectedExercise, editSeries);
       } else if (modalMode === 'create' && activeRoutine) {
         const newExercise = realm.create(Exercise, {
           _id: new Realm.BSON.UUID(),
           name: editName,
           descanso: numRest,
-          series: Array.from({ length: numSeries }, () => ({
-            _id: new Realm.BSON.UUID(),
-            reps: numReps,
-            weight: numWeight,
-            completed: false,
-          })),
+          series: buildSeriesList(editSeries),
         });
         activeRoutine.exercises.push(newExercise);
       }
@@ -382,21 +469,43 @@ export const HacerRutinaScreen = () => {
                 <View style={styles.rowInputs}>
                   <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
                     <Text style={styles.inputLabel}>Series</Text>
-                    <TextInput style={styles.numericInput} keyboardType="numeric" value={editSeriesCount} onChangeText={setEditSeriesCount} placeholder="3" />
-                  </View>
-                  <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
-                    <Text style={styles.inputLabel}>Reps</Text>
-                    <TextInput style={styles.numericInput} keyboardType="numeric" value={editReps} onChangeText={setEditReps} placeholder="10" />
-                  </View>
-                  <View style={[styles.inputGroup, { flex: 1 }]}>
-                    <Text style={styles.inputLabel}>Kg</Text>
-                    <TextInput style={styles.numericInput} keyboardType="decimal-pad" value={editWeight} onChangeText={setEditWeight} placeholder="60" />
+                    <TextInput style={styles.numericInput} keyboardType="numeric" value={editSeriesCount} onChangeText={(value) => { setEditSeriesCount(value); normalizeSeriesCount(value); }} placeholder="3" />
                   </View>
                 </View>
 
                 <View style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>Descanso entre series (segundos)</Text>
                   <TextInput style={styles.numericInput} keyboardType="numeric" value={editRest} onChangeText={setEditRest} placeholder="60" />
+                </View>
+
+                <View style={styles.seriesEditorList}>
+                  {editSeries.map((serie, index) => (
+                    <View key={`${index}-${editSeriesCount}`} style={styles.seriesEditorCard}>
+                      <Text style={styles.seriesEditorTitle}>Serie {index + 1}</Text>
+                      <View style={styles.rowInputs}>
+                        <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
+                          <Text style={styles.inputLabel}>Reps</Text>
+                          <TextInput
+                            style={styles.numericInput}
+                            keyboardType="numeric"
+                            value={serie.reps}
+                            onChangeText={(value) => setEditSeries((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, reps: value } : item))}
+                            placeholder="10"
+                          />
+                        </View>
+                        <View style={[styles.inputGroup, { flex: 1 }]}>
+                          <Text style={styles.inputLabel}>Kg</Text>
+                          <TextInput
+                            style={styles.numericInput}
+                            keyboardType="decimal-pad"
+                            value={serie.weight}
+                            onChangeText={(value) => setEditSeries((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, weight: value } : item))}
+                            placeholder="60"
+                          />
+                        </View>
+                      </View>
+                    </View>
+                  ))}
                 </View>
               </View>
 
@@ -506,7 +615,7 @@ export const HacerRutinaScreen = () => {
                             key={serie._id.toHexString()}
                             style={[styles.seriesRow, serieDone && styles.seriesRowCompleted]}
                             activeOpacity={0.7}
-                            onPress={() => toggleSerieComplete(serie)}
+                            onPress={() => toggleSerieComplete(serie, item)}
                           >
                             <View style={[styles.seriesCheckbox, serieDone && styles.seriesCheckboxChecked]}>
                               {serieDone && <Text style={styles.seriesCheckmark}>✓</Text>}
@@ -527,6 +636,33 @@ export const HacerRutinaScreen = () => {
               );
             }}
           />
+
+          <Modal
+            visible={activeRestId !== null}
+            transparent
+            animationType="fade"
+            statusBarTranslucent
+          >
+            <View style={styles.restOverlayRoot}>
+              {Platform.OS === 'ios' ? (
+                <BlurView intensity={95} tint="dark" style={StyleSheet.absoluteFillObject} />
+              ) : (
+                <View style={styles.restOverlayAndroidFallback} />
+              )}
+              <View style={styles.restOverlayDim} />
+
+              <View style={styles.restOverlayContent}>
+                <Text style={styles.restOverlayIcon}>⏱</Text>
+                <Text style={styles.restOverlayTitle}>Descanso</Text>
+                <Text style={styles.restOverlaySeconds}>{restTimeRemaining}</Text>
+                <Text style={styles.restOverlaySubtitle}>segundos</Text>
+
+                <TouchableOpacity style={styles.restOverlaySkipButton} onPress={skipRestTimer}>
+                  <Text style={styles.restOverlaySkipText}>Saltar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
 
           <View style={styles.footer}>
             <TouchableOpacity 
@@ -586,6 +722,17 @@ const styles = StyleSheet.create({
   seriesCheckmark: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 14, marginTop: -1 },
   seriesTitle: { fontSize: 15, fontWeight: '700', color: '#1F2937' },
   seriesSubtitle: { fontSize: 14, color: '#4B5563', marginTop: 2 },
+
+  restOverlayRoot: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  restOverlayAndroidFallback: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(2, 6, 23, 0.72)' },
+  restOverlayDim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(2, 6, 23, 0.42)' },
+  restOverlayContent: { alignItems: 'center', paddingHorizontal: 24 },
+  restOverlayIcon: { fontSize: 40, color: '#3B82F6', marginBottom: 10, fontWeight: '700' },
+  restOverlayTitle: { fontSize: 36, color: '#D5E2F3', fontWeight: '600', marginBottom: 6 },
+  restOverlaySeconds: { fontSize: 116, lineHeight: 116, color: '#3B82F6', fontWeight: '800', marginBottom: 6 },
+  restOverlaySubtitle: { fontSize: 32, color: '#7F92AE', fontWeight: '500', marginBottom: 28 },
+  restOverlaySkipButton: { backgroundColor: '#1E2A3C', borderRadius: 999, paddingVertical: 14, paddingHorizontal: 42 },
+  restOverlaySkipText: { color: '#E9EEF7', fontSize: 32, fontWeight: '700' },
   
   addExerciseBtn: { backgroundColor: '#E0E7FF', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 10, borderWidth: 1, borderColor: '#C7D2FE', borderStyle: 'dashed' },
   addExerciseBtnText: { color: '#4F46E5', fontWeight: 'bold', fontSize: 16 },
@@ -601,6 +748,9 @@ const styles = StyleSheet.create({
   formContainer: { marginBottom: 24 },
   inputGroup: { marginBottom: 16 },
   rowInputs: { flexDirection: 'row', justifyContent: 'space-between' },
+  seriesEditorList: { marginBottom: 8 },
+  seriesEditorCard: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, padding: 12, marginBottom: 12 },
+  seriesEditorTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 10 },
   inputLabel: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 8 },
   textInput: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, padding: 12, fontSize: 16, color: '#111827' },
   numericInput: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, padding: 12, fontSize: 18, color: '#111827', fontWeight: 'bold', textAlign: 'center' },
