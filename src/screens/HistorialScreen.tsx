@@ -115,9 +115,6 @@ export const HistorialScreen = () => {
               <View style={styles.tagContainer}>
                 <View style={styles.dataTag}><Text style={styles.tagText}>{item.series.length} Ser</Text></View>
                 <View style={styles.dataTag}><Text style={styles.tagText}>{item.descanso} s</Text></View>
-                {item.series[0] && (
-                  <View style={styles.dataTag}><Text style={styles.tagText}>{item.series[0].reps} Rep x {item.series[0].weight} kg</Text></View>
-                )}
               </View>
 
               <View style={styles.seriesList}>
