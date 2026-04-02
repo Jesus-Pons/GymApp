@@ -2,11 +2,40 @@ import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@realm/react';
+import Svg, { Path, Rect, Circle, Polyline } from 'react-native-svg';
 
 import { HistoryRoutine } from '../models/HistoryRoutine';
 
 export const InicioScreen = () => {
   const allHistory = useQuery(HistoryRoutine);
+
+  const iconColor = '#6C757D';
+
+  const DumbbellIcon = () => (
+    <Svg width={14} height={14} viewBox="0 0 24 24" fill="none">
+      <Path d="M14.4 14.4 9.6 9.6" stroke={iconColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M18.657 21.485a2 2 0 1 1-2.829-2.828l-1.767 1.768a2 2 0 1 1-2.829-2.829l6.364-6.364a2 2 0 1 1 2.829 2.829l-1.768 1.767a2 2 0 1 1 2.828 2.829z" stroke={iconColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="m21.5 21.5-1.4-1.4" stroke={iconColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M3.9 3.9 2.5 2.5" stroke={iconColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M6.404 12.768a2 2 0 1 1-2.829-2.829l1.768-1.767a2 2 0 1 1-2.828-2.829l2.828-2.828a2 2 0 1 1 2.829 2.828l1.767-1.768a2 2 0 1 1 2.829 2.829z" stroke={iconColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+
+  const CalendarIcon = () => (
+    <Svg width={14} height={14} viewBox="0 0 24 24" fill="none">
+      <Path d="M8 2v4" stroke={iconColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M16 2v4" stroke={iconColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Rect x={3} y={4} width={18} height={18} rx={2} stroke={iconColor} strokeWidth={2} />
+      <Path d="M3 10h18" stroke={iconColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+
+  const ClockIcon = () => (
+    <Svg width={14} height={14} viewBox="0 0 24 24" fill="none">
+      <Circle cx={12} cy={12} r={10} stroke={iconColor} strokeWidth={2} />
+      <Polyline points="12 6 12 12 16 14" stroke={iconColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
 
   const stats = useMemo(() => {
     const now = new Date();
@@ -63,10 +92,10 @@ export const InicioScreen = () => {
     return `${Math.round(kg).toLocaleString('es-ES')} kg`;
   };
 
-  const StatCard = ({ title, value, icon }: { title: string, value: string | number, icon: string }) => (
+  const StatCard = ({ title, value, icon }: { title: string, value: string | number, icon: React.ReactNode }) => (
     <View style={styles.statCard}>
       <View style={styles.iconPill}>
-        <Text style={styles.icon}>{icon}</Text>
+        {icon}
       </View>
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statTitle}>{title}</Text>
@@ -74,15 +103,15 @@ export const InicioScreen = () => {
   );
 
   const weeklyStats = [
-    { icon: '🏋️', title: 'SESIONES', value: stats.week.workouts },
-    { icon: '⚖️', title: 'VOLUMEN', value: formatWeight(stats.week.weight) },
-    { icon: '⏱️', title: 'TIEMPO', value: formatTime(stats.week.minutes) },
+    { icon: <DumbbellIcon />, title: 'SESIONES', value: stats.week.workouts },
+    { icon: <CalendarIcon />, title: 'VOLUMEN', value: formatWeight(stats.week.weight) },
+    { icon: <ClockIcon />, title: 'TIEMPO', value: formatTime(stats.week.minutes) },
   ];
 
   const totalStats = [
-    { icon: '🏋️', title: 'SESIONES', value: stats.total.workouts },
-    { icon: '⚖️', title: 'VOLUMEN', value: formatWeight(stats.total.weight) },
-    { icon: '⏱️', title: 'TIEMPO', value: formatTime(stats.total.minutes) },
+    { icon: <DumbbellIcon />, title: 'SESIONES', value: stats.total.workouts },
+    { icon: <CalendarIcon />, title: 'VOLUMEN', value: formatWeight(stats.total.weight) },
+    { icon: <ClockIcon />, title: 'TIEMPO', value: formatTime(stats.total.minutes) },
   ];
 
   return (
@@ -154,7 +183,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E8ECEF',
   },
-  icon: { fontSize: 13 },
   statValue: { fontSize: 22, lineHeight: 26, fontWeight: '800', color: '#1A1A1A', textAlign: 'center' },
   statTitle: { fontSize: 11, letterSpacing: 0.9, color: '#6C757D', fontWeight: '700', marginTop: 3, textAlign: 'center' },
 });
