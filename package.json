@@ -16,6 +16,7 @@
     "@realm/react": "^0.20.0",
     "babel-preset-expo": "~55.0.8",
     "expo": "~55.0.8",
+    "expo-blur": "~55.0.10",
     "expo-dev-client": "~55.0.18",
     "expo-status-bar": "~55.0.4",
     "expo-system-ui": "~55.0.11",
