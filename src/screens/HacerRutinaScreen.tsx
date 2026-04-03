@@ -16,6 +16,43 @@ type SeriesFormItem = {
 };
 
 const MAX_SERIES = 10;
+const MIN_SERIES = 1;
+
+type NumberStepperProps = {
+  label: string;
+  valueText: string;
+  onChangeText: (text: string) => void;
+  onDecrement: () => void;
+  onIncrement: () => void;
+  suffix?: string;
+};
+
+const NumberStepper = ({ label, valueText, onChangeText, onDecrement, onIncrement, suffix }: NumberStepperProps) => {
+  return (
+    <View style={styles.stepperBlock}>
+      {!!label && <Text style={styles.inputLabel}>{label}</Text>}
+      <View style={styles.stepperRow}>
+        <TouchableOpacity onPress={onDecrement} style={styles.stepperButton} activeOpacity={0.7}>
+          <Text style={styles.stepperButtonText}>−</Text>
+        </TouchableOpacity>
+
+        <View style={styles.stepperInputWrap}>
+          <TextInput
+            style={styles.stepperInput}
+            keyboardType="numeric"
+            value={valueText}
+            onChangeText={onChangeText}
+          />
+          {suffix && <Text style={styles.stepperSuffix}>{suffix}</Text>}
+        </View>
+
+        <TouchableOpacity onPress={onIncrement} style={styles.stepperButton} activeOpacity={0.7}>
+          <Text style={styles.stepperButtonText}>+</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+};
 
 export const HacerRutinaScreen = () => {
   const realm = useRealm();
@@ -38,6 +75,29 @@ export const HacerRutinaScreen = () => {
   const [editSeries, setEditSeries] = useState<SeriesFormItem[]>([]);
   const [activeSeriesIndex, setActiveSeriesIndex] = useState(0);
   const [seriesPagerWidth, setSeriesPagerWidth] = useState(0);
+
+  const getSeriesCountValue = () => {
+    const parsed = parseInt(editSeriesCount, 10);
+    if (isNaN(parsed)) return MIN_SERIES;
+    return Math.max(MIN_SERIES, Math.min(MAX_SERIES, parsed));
+  };
+
+  const getRestValue = () => {
+    const parsed = parseInt(editRest, 10);
+    if (isNaN(parsed)) return 0;
+    return Math.max(0, parsed);
+  };
+
+  const setSeriesCountValue = (nextValue: number) => {
+    const clamped = Math.max(MIN_SERIES, Math.min(MAX_SERIES, nextValue));
+    setEditSeriesCount(String(clamped));
+    normalizeSeriesCount(String(clamped));
+  };
+
+  const setRestValue = (nextValue: number) => {
+    const safeValue = Math.max(0, nextValue);
+    setEditRest(String(safeValue));
+  };
 
   // --- ESTADO DEL TEMPORIZADOR ---
   const [activeRestId, setActiveRestId] = useState<string | null>(null);
@@ -124,15 +184,7 @@ export const HacerRutinaScreen = () => {
       setEditSeriesCount(String(MAX_SERIES));
     }
 
-    setEditSeries((current) => {
-      const lastSeries = current[current.length - 1] ?? { reps: '', weight: '' };
-
-      return Array.from({ length: cappedCount }, (_, index) => current[index] ?? lastSeries)
-        .map((serie) => ({
-          reps: serie.reps,
-          weight: serie.weight,
-        }));
-    });
+    setEditSeries([{reps: '1', weight: '1'}])
   };
 
   const syncExerciseSeries = (exercise: Exercise, seriesData: SeriesFormItem[]) => {
@@ -363,10 +415,10 @@ export const HacerRutinaScreen = () => {
     setModalMode('create');
     setSelectedExercise(null);
     setEditName('');
-    setEditSeriesCount('');
+    setEditSeriesCount('1');
     setActiveSeriesIndex(0);
-    setEditSeries([]);
-    setEditRest('');
+    normalizeSeriesCount('1');
+    setEditRest('0');
     setIsModalVisible(true);
   };
 
@@ -481,17 +533,30 @@ export const HacerRutinaScreen = () => {
                   />
                 </View>
 
-                <View style={styles.rowInputs}>
-                  <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
-                    <Text style={styles.inputLabel}>Series</Text>
-                    <TextInput style={styles.numericInput} keyboardType="numeric" value={editSeriesCount} onChangeText={(value) => { setEditSeriesCount(value); normalizeSeriesCount(value); }} />
-                  </View>
-                </View>
+                <NumberStepper
+                  label="Series"
+                  valueText={editSeriesCount}
+                  onChangeText={(value) => {
+                    const sanitized = value.replace(/[^0-9]/g, '');
+                    setEditSeriesCount(sanitized);
+                    if (sanitized) {
+                      normalizeSeriesCount(sanitized);
+                    }
+                  }}
+                  onDecrement={() => setSeriesCountValue(Math.max(MIN_SERIES, getSeriesCountValue() - 1))}
+                  onIncrement={() => setSeriesCountValue(getSeriesCountValue() + 1)}
+                />
 
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Descanso entre series (segundos)</Text>
-                  <TextInput style={styles.numericInput} keyboardType="numeric" value={editRest} onChangeText={setEditRest} />
-                </View>
+                <NumberStepper
+                  label="Descanso entre series (segundos)"
+                  valueText={editRest}
+                  onChangeText={(value) => {
+                    const sanitized = value.replace(/[^0-9]/g, '');
+                    setEditRest(sanitized);
+                  }}
+                  onDecrement={() => setRestValue(Math.max(0, getRestValue() - 15))}
+                  onIncrement={() => setRestValue(getRestValue() + 15)}
+                />
 
                 <View style={styles.seriesEditorList}>
                   {editSeries.length === 0 ? (
@@ -535,22 +600,66 @@ export const HacerRutinaScreen = () => {
                           >
                             <Text style={styles.seriesEditorTitle}>Serie {index + 1}</Text>
                             <View style={styles.rowInputs}>
-                              <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
-                                <Text style={styles.inputLabel}>Reps</Text>
-                                <TextInput
-                                  style={styles.numericInput}
-                                  keyboardType="numeric"
-                                  value={serie.reps}
-                                  onChangeText={(value) => setEditSeries((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, reps: value } : item))}
+                              <View style={{ flex: 1, marginRight: 5 }}>
+                                <NumberStepper
+                                  label="Reps"
+                                  valueText={serie.reps}
+                                  onChangeText={(value) => {
+                                    const sanitized = value.replace(/[^0-9]/g, '');
+                                    setEditSeries((current) => 
+                                      current.map((item, itemIndex) => 
+                                        itemIndex === index ? { ...item, reps: sanitized } : item
+                                      )
+                                    );
+                                  }}
+                                  onDecrement={() => {
+                                    const repsValue = parseInt(serie.reps, 10) || 0;
+                                    setEditSeries((current) =>
+                                      current.map((item, itemIndex) =>
+                                        itemIndex === index ? { ...item, reps: String(Math.max(0, repsValue - 1)) } : item
+                                      )
+                                    );
+                                  }}
+                                  onIncrement={() => {
+                                    const repsValue = parseInt(serie.reps, 10) || 0;
+                                    setEditSeries((current) =>
+                                      current.map((item, itemIndex) =>
+                                        itemIndex === index ? { ...item, reps: String(repsValue + 1) } : item
+                                      )
+                                    );
+                                  }}
                                 />
                               </View>
-                              <View style={[styles.inputGroup, { flex: 1 }]}>
-                                <Text style={styles.inputLabel}>Kg</Text>
-                                <TextInput
-                                  style={styles.numericInput}
-                                  keyboardType="decimal-pad"
-                                  value={serie.weight}
-                                  onChangeText={(value) => setEditSeries((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, weight: value } : item))}
+                              <View style={{ flex: 1, marginLeft: 5 }}>
+                                <NumberStepper
+                                  label="Peso (kg)"
+                                  valueText={serie.weight}
+                                  onChangeText={(value) => {
+                                    const sanitized = value.replace(/[^0-9.,]/g, '').replace(',', '.');
+                                    const firstDot = sanitized.indexOf('.');
+                                    const formatted = firstDot === -1 ? sanitized : sanitized.slice(0, firstDot + 1) + sanitized.slice(firstDot + 1).replace(/\./g, '');
+                                    setEditSeries((current) =>
+                                      current.map((item, itemIndex) =>
+                                        itemIndex === index ? { ...item, weight: formatted } : item
+                                      )
+                                    );
+                                  }}
+                                  onDecrement={() => {
+                                    const weightValue = Math.round((parseFloat(serie.weight.replace(',', '.')) || 0) - 1);
+                                    setEditSeries((current) =>
+                                      current.map((item, itemIndex) =>
+                                        itemIndex === index ? { ...item, weight: String(weightValue) } : item
+                                      )
+                                    );
+                                  }}
+                                  onIncrement={() => {
+                                    const weightValue = Math.round((parseFloat(serie.weight.replace(',', '.')) || 0) + 1);
+                                    setEditSeries((current) =>
+                                      current.map((item, itemIndex) =>
+                                        itemIndex === index ? { ...item, weight: String(weightValue) } : item
+                                      )
+                                    );
+                                  }}
                                 />
                               </View>
                             </View>
@@ -849,4 +958,11 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 14,
   },
+  stepperBlock: { marginBottom: 16 },
+  stepperRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 8 },
+  stepperButton: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  stepperButtonText: { color: '#3B82F6', fontSize: 20, fontWeight: '700', marginTop: -1 },
+  stepperInputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginHorizontal: 8 },
+  stepperInput: { flex: 1, color: '#111827', fontSize: 18, fontWeight: '500', textAlign: 'center', paddingVertical: 0, minWidth: 24 },
+  stepperSuffix: { color: '#111827', fontSize: 16, fontWeight: '500', marginLeft: 4 },
 });

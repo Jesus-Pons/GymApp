@@ -121,6 +121,8 @@ export const RutinasScreen = () => {
   const [editingExercise, setEditingExercise] = useState<Exercise | null>(null);
   const [exerciseForm, setExerciseForm] = useState({ name: '', seriesCount: '', descanso: '' });
   const [seriesForm, setSeriesForm] = useState<SeriesFormItem[]>([]);
+  const [activeSeriesIndex, setActiveSeriesIndex] = useState(0);
+  const [seriesPagerWidth, setSeriesPagerWidth] = useState(0);
   const swipeablesRef = useRef<Map<string, any>>(new Map());
 
   const sanitizeIntText = (value: string) => value.replace(/[^0-9]/g, '');
@@ -340,7 +342,8 @@ export const RutinasScreen = () => {
     } else {
       setEditingExercise(null);
       setExerciseForm({ name: '', seriesCount: String(MIN_SERIES), descanso: '0' });
-      setSeriesForm([{ reps: '0', weight: '0' }]);
+      setSeriesForm([{ reps: '1', weight: '1' }]);
+      setActiveSeriesIndex(0);
     }
     setExerciseModalVisible(true);
   };
@@ -557,37 +560,91 @@ export const RutinasScreen = () => {
                 </View>
 
                 <View style={styles.seriesEditorList}>
-                  {seriesForm.map((serie, index) => (
-                    <View key={`${index}-${exerciseForm.seriesCount}`} style={styles.seriesEditorCard}>
-                      <Text style={styles.seriesEditorTitle}>Serie {index + 1}</Text>
-                      <View style={styles.rowInputs}>
-                        <View style={[styles.inputGroup, { flex: 1, marginRight: 5 }]}>
-                          <NumberStepper
-                            label="Reps"
-                            valueText={serie.reps}
-                            onChangeText={(value) => {
-                              const sanitized = sanitizeIntText(value);
-                              setSeriesForm((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, reps: sanitized } : item));
-                            }}
-                            onDecrement={() => updateSeriesNumber(index, 'reps', (parseInt(serie.reps, 10) || 0) - 1)}
-                            onIncrement={() => updateSeriesNumber(index, 'reps', (parseInt(serie.reps, 10) || 0) + 1)}
-                          />
-                        </View>
-                        <View style={[styles.inputGroup, { flex: 1, marginLeft: 5 }]}>
-                          <NumberStepper
-                            label="Peso (kg)"
-                            valueText={serie.weight}
-                            onChangeText={(value) => {
-                              const sanitized = sanitizeWeightText(value);
-                              setSeriesForm((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, weight: sanitized } : item));
-                            }}
-                            onDecrement={() => updateSeriesNumber(index, 'weight', Math.round((parseFloat(serie.weight.replace(',', '.')) || 0) - 1))}
-                            onIncrement={() => updateSeriesNumber(index, 'weight', Math.round((parseFloat(serie.weight.replace(',', '.')) || 0) + 1))}
-                          />
-                        </View>
+                  {seriesForm.length === 0 ? (
+                    <View style={styles.seriesEmptySpace} />
+                  ) : (
+                    <View
+                      style={styles.seriesPagerContainer}
+                      onLayout={(event) => {
+                        const width = Math.floor(event.nativeEvent.layout.width);
+                        if (width > 0 && width !== seriesPagerWidth) {
+                          setSeriesPagerWidth(width);
+                        }
+                      }}
+                    >
+                      <View style={styles.seriesPagerHeader}>
+                        <Text style={styles.seriesPagerCount}>Serie {activeSeriesIndex + 1} de {seriesForm.length}</Text>
                       </View>
+
+                      <ScrollView
+                        horizontal
+                        pagingEnabled
+                        showsHorizontalScrollIndicator={false}
+                        onMomentumScrollEnd={(event) => {
+                          const width = event.nativeEvent.layoutMeasurement.width;
+                          if (width <= 0) {
+                            return;
+                          }
+                          const nextIndex = Math.round(event.nativeEvent.contentOffset.x / width);
+                          const maxIndex = Math.max(seriesForm.length - 1, 0);
+                          setActiveSeriesIndex(Math.min(Math.max(nextIndex, 0), maxIndex));
+                        }}
+                      >
+                        {seriesForm.map((serie, index) => (
+                          <View
+                            key={`${index}-${exerciseForm.seriesCount}`}
+                            style={[
+                              styles.seriesEditorCard,
+                              styles.seriesSlide,
+                              seriesPagerWidth > 0 ? { width: seriesPagerWidth } : null,
+                            ]}
+                          >
+                            <Text style={styles.seriesEditorTitle}>Serie {index + 1}</Text>
+                            <View style={styles.rowInputs}>
+                              <View style={{ flex: 1, marginRight: 5 }}>
+                                <NumberStepper
+                                  label="Reps"
+                                  valueText={serie.reps}
+                                  onChangeText={(value) => {
+                                    const sanitized = sanitizeIntText(value);
+                                    setSeriesForm((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, reps: sanitized } : item));
+                                  }}
+                                  onDecrement={() => updateSeriesNumber(index, 'reps', (parseInt(serie.reps, 10) || 0) - 1)}
+                                  onIncrement={() => updateSeriesNumber(index, 'reps', (parseInt(serie.reps, 10) || 0) + 1)}
+                                />
+                              </View>
+                              <View style={{ flex: 1, marginLeft: 5 }}>
+                                <NumberStepper
+                                  label="Peso (kg)"
+                                  valueText={serie.weight}
+                                  onChangeText={(value) => {
+                                    const sanitized = sanitizeWeightText(value);
+                                    setSeriesForm((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, weight: sanitized } : item));
+                                  }}
+                                  onDecrement={() => updateSeriesNumber(index, 'weight', Math.round((parseFloat(serie.weight.replace(',', '.')) || 0) - 1))}
+                                  onIncrement={() => updateSeriesNumber(index, 'weight', Math.round((parseFloat(serie.weight.replace(',', '.')) || 0) + 1))}
+                                />
+                              </View>
+                            </View>
+                          </View>
+                        ))}
+                      </ScrollView>
+
+                      {seriesForm.length > 1 && (
+                        <View style={styles.seriesDotsRow}>
+                          {seriesForm.map((_, index) => (
+                            <View
+                              key={`dot-${index}`}
+                              style={[
+                                styles.seriesDot,
+                                index === activeSeriesIndex && styles.seriesDotActive,
+                              ]}
+                            />
+                          ))}
+                        </View>
+                      )}
                     </View>
-                  ))}
+                  )}
                 </View>
               </ScrollView>
 
@@ -805,4 +862,12 @@ const styles = StyleSheet.create({
   cancelBtnText: { color: COLORS.subText, fontWeight: '600', fontSize: 16 },
   saveBtn: { backgroundColor: COLORS.primary, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 8 },
   saveBtnText: { color: COLORS.cardBg, fontWeight: '600', fontSize: 16 },
+  seriesEmptySpace: { height: 0 },
+  seriesPagerContainer: { marginBottom: 8 },
+  seriesPagerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  seriesPagerCount: { fontSize: 12, color: '#374151', fontWeight: '700' },
+  seriesSlide: { marginBottom: 0 },
+  seriesDotsRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 10, marginBottom: 4, gap: 6 },
+  seriesDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#D1D5DB' },
+  seriesDotActive: { width: 18, backgroundColor: '#007AFF' },
 });
