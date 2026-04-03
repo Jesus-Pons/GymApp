@@ -458,7 +458,7 @@ export const RutinasScreen = () => {
                 deleteRoutine(selectedRoutine);
               }}
             >
-              <Text style={styles.iconButtonText}>🗑️</Text>
+              <Text style={styles.deleteButtonTextMinimal}>Eliminar</Text>
             </TouchableOpacity>
             <TouchableOpacity 
               style={styles.addButtonMinimal} 
@@ -642,7 +642,7 @@ export const RutinasScreen = () => {
   // ==========================================
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { justifyContent: 'space-between' }]}>
         <Text style={styles.title}>Mis Rutinas</Text>
         <TouchableOpacity style={styles.addButtonMinimal} onPress={() => openRoutineModal()}>
           <Text style={styles.addButtonTextMinimal}>+ Nueva</Text>
@@ -725,7 +725,7 @@ const styles = StyleSheet.create({
   
   headerRightActions: { flexDirection: 'row', alignItems: 'center' },
   iconButton: { paddingHorizontal: 10, paddingVertical: 6, marginRight: 5 },
-  iconButtonText: { fontSize: 20 },
+  deleteButtonTextMinimal: { color: COLORS.danger, fontWeight: '600', fontSize: 16  },
   
   addButtonMinimal: { paddingHorizontal: 12, paddingVertical: 6 },
   addButtonTextMinimal: { color: COLORS.primary, fontWeight: '600', fontSize: 16 },
@@ -767,7 +767,6 @@ const styles = StyleSheet.create({
   swipeDeleteText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
 
   emptyText: { textAlign: 'center', marginTop: 60, color: COLORS.subText, fontSize: 16, paddingHorizontal: 40 },
-
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 },
   modalContent: { backgroundColor: COLORS.cardBg, borderRadius: 16, padding: 24, elevation: 10, maxHeight: '90%' },
   modalScrollContent: { paddingBottom: 30 },
@@ -782,7 +781,7 @@ const styles = StyleSheet.create({
   rowInputs: { flexDirection: 'row', justifyContent: 'space-between' },
   stepperBlock: { marginBottom: 0 },
   stepperRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.bg, borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 8 },
-  stepperButton: { width: 36, height: 36, borderRadius: 8, backgroundColor: '#E6EEF8', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  stepperButton: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#E6EEF8', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   stepperButtonText: { color: COLORS.primary, fontSize: 20, fontWeight: '700', marginTop: -1 },
   stepperInputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginHorizontal: 8 },
   stepperInput: { flex: 1, color: COLORS.text, fontSize: 20, fontWeight: '500', textAlign: 'center', paddingVertical: 0, minWidth: 24 },

@@ -99,7 +99,7 @@ export const HistorialScreen = () => {
             onPress={() => deleteHistoryRecord(selectedHistory)}
             style={styles.deleteDetailButton}
           >
-            <Text style={styles.deleteIconText}>🗑️</Text>
+            <Text style={styles.deleteIconText}>Eliminar</Text>
           </TouchableOpacity>
         </View>
 
@@ -120,9 +120,6 @@ export const HistorialScreen = () => {
               <View style={styles.seriesList}>
                 {item.series.map((serie, index) => (
                   <View key={serie._id.toHexString()} style={styles.seriesRow}>
-                    <View style={[styles.seriesStatus, serie.completed && styles.seriesStatusCompleted]}>
-                      <Text style={styles.seriesStatusText}>{serie.completed ? '✓' : ''}</Text>
-                    </View>
                     <Text style={styles.seriesText}>Serie {index + 1}: {serie.reps} reps · {serie.weight} kg</Text>
                   </View>
                 ))}
@@ -146,7 +143,7 @@ export const HistorialScreen = () => {
         <Text style={styles.title}>Historial</Text>
         {history.length > 0 && (
           <TouchableOpacity onPress={deleteAllHistory} style={styles.deleteAllButton}>
-            <Text style={styles.deleteAllText}>🗑️ Borrar todo</Text>
+            <Text style={styles.deleteAllText}>Borrar historial</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -170,7 +167,7 @@ export const HistorialScreen = () => {
                   onPress={() => deleteHistoryRecord(item)}
                   style={styles.deleteIconButton}
                 >
-                  <Text style={styles.deleteIconText}>🗑️</Text>
+                  <Text style={styles.deleteIconText}>Eliminar</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -214,7 +211,7 @@ const styles = StyleSheet.create({
   deleteDetailButton: { padding: 5, marginLeft: 10 },
   cardHeaderRight: { flexDirection: 'row', alignItems: 'center' },
   deleteIconButton: { marginLeft: 10, padding: 4 },
-  deleteIconText: { fontSize: 18 },
+  deleteIconText: { fontSize: 18,color: COLORS.danger, fontWeight: '500' },
 
   // Tarjetas del Historial
   routineCard: { 
