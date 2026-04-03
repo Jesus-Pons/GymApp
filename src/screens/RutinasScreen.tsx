@@ -1,108 +1,51 @@
-import Realm from "realm";
+import Realm from 'realm';
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  FlatList, 
-  StyleSheet, 
+import {
+  View,
+  Text,
+  FlatList,
   TouchableOpacity,
   TextInput,
   Modal,
   Alert,
   ScrollView,
   KeyboardAvoidingView,
-  Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
-
-// Importamos los hooks de Realm
 import { useQuery, useRealm } from '@realm/react';
 
-// Importamos nuestros modelos y el enumerador de estado
 import { Routine, RoutineStatus } from '../models/Routine';
 import { Exercise } from '../models/Exercise';
-import { Serie } from '../models/Serie';
-
-type SeriesFormItem = {
-  reps: string;
-  weight: string;
-};
-
-const MAX_SERIES = 10;
-const MIN_SERIES = 1;
-const REST_STEP = 15;
-
-type NumberStepperProps = {
-  label: string;
-  valueText: string;
-  onChangeText: (text: string) => void;
-  onDecrement: () => void;
-  onIncrement: () => void;
-  suffix?: string;
-  onBlur?: () => void;
-};
-
-const NumberStepper = ({ label, valueText, onChangeText, onDecrement, onIncrement, suffix, onBlur }: NumberStepperProps) => {
-  return (
-    <View style={styles.stepperBlock}>
-      {!!label && <Text style={styles.inputLabel}>{label}</Text>}
-      <View style={styles.stepperRow}>
-        <TouchableOpacity style={styles.stepperButton} onPress={onDecrement}>
-          <Text style={styles.stepperButtonText}>-</Text>
-        </TouchableOpacity>
-
-        <View style={styles.stepperInputWrap}>
-          <TextInput
-            style={styles.stepperInput}
-            value={valueText}
-            onChangeText={onChangeText}
-            onBlur={onBlur}
-            keyboardType="numeric"
-            textAlign="center"
-          />
-          {!!suffix && <Text style={styles.stepperSuffix}>{suffix}</Text>}
-        </View>
-
-        <TouchableOpacity style={styles.stepperButton} onPress={onIncrement}>
-          <Text style={styles.stepperButtonText}>+</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-};
-
-// ==========================================
-// PALETA DE COLORES
-// ==========================================
-const COLORS = {
-  bg: '#F8F9FA',      
-  cardBg: '#FFFFFF',  
-  text: '#1A1A1A',    
-  subText: '#6C757D', 
-  primary: '#007AFF', 
-  danger: '#DC3545',  
-  tagBg: '#E9ECEF',   
-  border: '#DEE2E6',  
-};
+import { styles } from '../styles/RutinasScreen.styles';
+import { NumberStepper } from '../components/routines/NumberStepper';
+import { SeriesPagerEditor } from '../components/routines/SeriesPagerEditor';
+import {
+  SeriesFormItem,
+  MAX_SERIES,
+  MIN_SERIES,
+  REST_STEP,
+  buildSeriesList,
+  normalizeSeriesFormCount,
+  sanitizeIntText,
+  sanitizeWeightText,
+  syncExerciseSeries,
+} from '../utils/routines/seriesForm';
+import { createDraftFromTemplate } from '../utils/routines/drafts';
 
 export const RutinasScreen = () => {
   const realm = useRealm();
   const navigation = useNavigation<any>();
-  
-  const routines = useQuery(Routine, (collection) => 
+
+  const routines = useQuery(Routine, (collection) =>
     collection.filtered('status == $0', RoutineStatus.TEMPLATE)
   );
 
-  // --- NUEVO: Buscamos si hay alguna rutina a medias ---
-  const drafts = useQuery(Routine, (collection) => 
+  const drafts = useQuery(Routine, (collection) =>
     collection.filtered('status == $0', RoutineStatus.DRAFT)
   );
 
-  // --- NUEVO: Redirección automática ---
-  // Si entramos a la pantalla de Rutinas y existe un DRAFT, 
-  // saltamos directamente a la pantalla de hacer rutina.
   useEffect(() => {
     if (drafts.length > 0) {
       navigation.navigate('HacerRutina');
@@ -111,32 +54,16 @@ export const RutinasScreen = () => {
 
   const [selectedRoutine, setSelectedRoutine] = useState<Routine | null>(null);
 
-  // --- Estados CRUD Rutinas ---
   const [isRoutineModalVisible, setRoutineModalVisible] = useState(false);
   const [editingRoutine, setEditingRoutine] = useState<Routine | null>(null);
   const [routineName, setRoutineName] = useState('');
 
-  // --- Estados CRUD Ejercicios ---
   const [isExerciseModalVisible, setExerciseModalVisible] = useState(false);
   const [editingExercise, setEditingExercise] = useState<Exercise | null>(null);
   const [exerciseForm, setExerciseForm] = useState({ name: '', seriesCount: '', descanso: '' });
   const [seriesForm, setSeriesForm] = useState<SeriesFormItem[]>([]);
   const [activeSeriesIndex, setActiveSeriesIndex] = useState(0);
-  const [seriesPagerWidth, setSeriesPagerWidth] = useState(0);
   const swipeablesRef = useRef<Map<string, any>>(new Map());
-
-  const sanitizeIntText = (value: string) => value.replace(/[^0-9]/g, '');
-
-  const sanitizeWeightText = (value: string) => {
-    const sanitized = value.replace(/[^0-9.,]/g, '').replace(',', '.');
-    const firstDot = sanitized.indexOf('.');
-
-    if (firstDot === -1) {
-      return sanitized;
-    }
-
-    return sanitized.slice(0, firstDot + 1) + sanitized.slice(firstDot + 1).replace(/\./g, '');
-  };
 
   const getSeriesCountValue = () => {
     const parsed = parseInt(exerciseForm.seriesCount, 10);
@@ -150,9 +77,19 @@ export const RutinasScreen = () => {
     return Math.max(0, parsed);
   };
 
+  const normalizeSeriesCount = (countText: string) => {
+    const normalized = normalizeSeriesFormCount(seriesForm, countText, MIN_SERIES, MAX_SERIES);
+
+    if (!normalized) {
+      return;
+    }
+
+    setExerciseForm((current) => ({ ...current, seriesCount: normalized.countText }));
+    setSeriesForm(normalized.series);
+  };
+
   const setSeriesCountValue = (nextValue: number) => {
     const clamped = Math.max(MIN_SERIES, Math.min(MAX_SERIES, nextValue));
-    setExerciseForm((current) => ({ ...current, seriesCount: String(clamped) }));
     normalizeSeriesCount(String(clamped));
   };
 
@@ -170,9 +107,7 @@ export const RutinasScreen = () => {
       return;
     }
 
-    const clamped = Math.max(MIN_SERIES, Math.min(MAX_SERIES, parseInt(sanitized, 10)));
-    setExerciseForm((current) => ({ ...current, seriesCount: String(clamped) }));
-    normalizeSeriesCount(String(clamped));
+    normalizeSeriesCount(sanitized);
   };
 
   const handleRestTextChange = (value: string) => {
@@ -198,81 +133,17 @@ export const RutinasScreen = () => {
     );
   };
 
-  const normalizeSeriesCount = (countText: string) => {
-    const count = parseInt(countText, 10);
-
-    if (isNaN(count) || count < MIN_SERIES) {
-      return;
-    }
-
-    const cappedCount = Math.min(count, MAX_SERIES);
-
-    if (cappedCount !== count) {
-      setExerciseForm((current) => ({ ...current, seriesCount: String(MAX_SERIES) }));
-    }
-
-    setSeriesForm((current) => {
-      const lastSeries = current[current.length - 1] ?? { reps: '', weight: '' };
-
-      return Array.from({ length: cappedCount }, (_, index) => current[index] ?? lastSeries)
-        .map((serie) => ({
-          reps: serie.reps,
-          weight: serie.weight,
-        }));
-    });
-  };
-
-  const buildSeriesList = (seriesData: SeriesFormItem[], completed = false) => {
-    return seriesData.map((serie) => ({
-      _id: new Realm.BSON.UUID(),
-      reps: parseInt(serie.reps, 10) || 0,
-      weight: parseFloat(serie.weight.replace(',', '.')) || 0,
-      completed,
-    }));
-  };
-
-  // ==========================================
-  // LÓGICA PARA EMPEZAR A ENTRENAR
-  // ==========================================
   const startRoutine = (templateRoutine: Routine) => {
-    let draftId: string = '';
+    let draftId = '';
 
     realm.write(() => {
-      // 1. Creamos una nueva rutina en modo DRAFT
-      const draftRoutine = realm.create(Routine, {
-        _id: new Realm.BSON.UUID(),
-        name: templateRoutine.name,
-        status: RoutineStatus.DRAFT,
-        exercises: [],
-        createdAt: new Date(),
-      });
-
-      // 2. Hacemos una copia profunda de cada ejercicio para no sobreescribir la plantilla
-      templateRoutine.exercises.forEach(ex => {
-        const copiedEx = realm.create(Exercise, {
-          _id: new Realm.BSON.UUID(), // IMPORTANTE: Nuevo ID para el ejercicio copiado
-          name: ex.name,
-          descanso: ex.descanso,
-          series: ex.series.map((serie) => ({
-            _id: new Realm.BSON.UUID(),
-            reps: serie.reps,
-            weight: serie.weight,
-            completed: false,
-          })),
-        });
-        draftRoutine.exercises.push(copiedEx);
-      });
-
+      const draftRoutine = createDraftFromTemplate(realm, templateRoutine);
       draftId = draftRoutine._id.toHexString();
     });
 
-    // 3. Navegamos a la pantalla de entrenamiento pasándole el ID del borrador
     navigation.navigate('HacerRutina', { routineId: draftId });
   };
 
-  // ==========================================
-  // FUNCIONES CRUD PARA RUTINAS
-  // ==========================================
   const openRoutineModal = (routine?: Routine) => {
     if (routine) {
       setEditingRoutine(routine);
@@ -308,23 +179,24 @@ export const RutinasScreen = () => {
   const deleteRoutine = (routine: Routine) => {
     Alert.alert('Eliminar', `¿Seguro que quieres eliminar la rutina "${routine.name}"?`, [
       { text: 'Cancelar', style: 'cancel' },
-      { text: 'Eliminar', style: 'destructive', onPress: () => {
-        realm.write(() => {
-          routine.exercises.forEach((exercise) => {
-            realm.delete(exercise.series);
+      {
+        text: 'Eliminar',
+        style: 'destructive',
+        onPress: () => {
+          realm.write(() => {
+            routine.exercises.forEach((exercise) => {
+              realm.delete(exercise.series);
+            });
+            realm.delete(routine.exercises);
+            realm.delete(routine);
           });
-          realm.delete(routine.exercises); 
-          realm.delete(routine);
-        });
-        setSelectedRoutine(null);
-        setRoutineModalVisible(false);
-      }}
+          setSelectedRoutine(null);
+          setRoutineModalVisible(false);
+        },
+      },
     ]);
   };
 
-  // ==========================================
-  // FUNCIONES CRUD PARA EJERCICIOS
-  // ==========================================
   const openExerciseModal = (exercise?: Exercise) => {
     if (exercise) {
       setEditingExercise(exercise);
@@ -353,8 +225,8 @@ export const RutinasScreen = () => {
       return Alert.alert('Error', 'El nombre del ejercicio es obligatorio');
     }
 
-    const targetCount = Math.max(MIN_SERIES, Math.min(MAX_SERIES, parseInt(exerciseForm.seriesCount) || 0));
-    const descanso = parseInt(exerciseForm.descanso) || 0;
+    const targetCount = Math.max(MIN_SERIES, Math.min(MAX_SERIES, parseInt(exerciseForm.seriesCount, 10) || 0));
+    const descanso = parseInt(exerciseForm.descanso, 10) || 0;
     const invalidSeries = seriesForm.some((serie) => {
       const reps = parseInt(serie.reps, 10);
       const weight = parseFloat(serie.weight.replace(',', '.'));
@@ -370,30 +242,7 @@ export const RutinasScreen = () => {
       if (editingExercise) {
         editingExercise.name = exerciseForm.name;
         editingExercise.descanso = descanso;
-
-        while (editingExercise.series.length > targetCount) {
-          const lastSeries = editingExercise.series[editingExercise.series.length - 1];
-          realm.delete(lastSeries);
-        }
-
-        while (editingExercise.series.length < targetCount) {
-          const seriesIndex = editingExercise.series.length;
-          const seriesData = seriesForm[seriesIndex] ?? seriesForm[seriesForm.length - 1];
-          editingExercise.series.push(
-            realm.create(Serie, {
-              _id: new Realm.BSON.UUID(),
-              reps: parseInt(seriesData.reps, 10) || 0,
-              weight: parseFloat(seriesData.weight.replace(',', '.')) || 0,
-              completed: false,
-            })
-          );
-        }
-
-        editingExercise.series.forEach((serie, index) => {
-          const seriesData = seriesForm[index] ?? seriesForm[seriesForm.length - 1];
-          serie.reps = parseInt(seriesData.reps, 10) || 0;
-          serie.weight = parseFloat(seriesData.weight.replace(',', '.')) || 0;
-        });
+        syncExerciseSeries(realm, editingExercise, seriesForm);
       } else {
         const newExercise = realm.create(Exercise, {
           _id: new Realm.BSON.UUID(),
@@ -433,18 +282,22 @@ export const RutinasScreen = () => {
     });
   };
 
-  // ==========================================
-  // VISTA DE EJERCICIOS (DETALLE DE RUTINA)
-  // ==========================================
+  useEffect(() => {
+    const maxIndex = Math.max(seriesForm.length - 1, 0);
+    if (activeSeriesIndex > maxIndex) {
+      setActiveSeriesIndex(maxIndex);
+    }
+  }, [seriesForm.length, activeSeriesIndex]);
+
   if (selectedRoutine) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity 
+          <TouchableOpacity
             onPress={() => {
               closeAllSwipeables();
               setSelectedRoutine(null);
-            }} 
+            }}
             style={styles.backButton}
           >
             <Text style={styles.backButtonText}>{'<'}</Text>
@@ -452,10 +305,10 @@ export const RutinasScreen = () => {
           <TouchableOpacity onPress={() => openRoutineModal(selectedRoutine)} style={styles.headerTitleContainer}>
             <Text style={styles.title} numberOfLines={1}>{selectedRoutine.name}</Text>
           </TouchableOpacity>
-          
+
           <View style={styles.headerRightActions}>
-            <TouchableOpacity 
-              style={styles.iconButton} 
+            <TouchableOpacity
+              style={styles.iconButton}
               onPress={() => {
                 closeAllSwipeables();
                 deleteRoutine(selectedRoutine);
@@ -463,8 +316,8 @@ export const RutinasScreen = () => {
             >
               <Text style={styles.deleteButtonTextMinimal}>Eliminar</Text>
             </TouchableOpacity>
-            <TouchableOpacity 
-              style={styles.addButtonMinimal} 
+            <TouchableOpacity
+              style={styles.addButtonMinimal}
               onPress={() => {
                 closeAllSwipeables();
                 openExerciseModal();
@@ -492,12 +345,12 @@ export const RutinasScreen = () => {
               renderRightActions={() => renderExerciseSwipeAction(item)}
               overshootRight={false}
             >
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={() => {
                   closeAllSwipeables();
                   openExerciseModal(item);
-                }} 
-                activeOpacity={0.7} 
+                }}
+                activeOpacity={0.7}
                 style={styles.exerciseItem}
               >
                 <View style={styles.exerciseHeader}>
@@ -511,14 +364,13 @@ export const RutinasScreen = () => {
             </Swipeable>
           )}
           ListEmptyComponent={
-            <Text style={styles.emptyText}>No hay ejercicios en esta rutina aún.</Text>
+            <Text style={styles.emptyText}>No hay ejercicios en esta rutina aun.</Text>
           }
         />
 
-        {/* MODAL EJERCICIOS */}
         <Modal visible={isExerciseModalVisible} transparent animationType="fade">
-          <KeyboardAvoidingView 
-            behavior="padding" 
+          <KeyboardAvoidingView
+            behavior="padding"
             style={styles.modalOverlay}
           >
             <View style={styles.modalContent}>
@@ -534,7 +386,7 @@ export const RutinasScreen = () => {
                     style={styles.input}
                     placeholder="Ej: Press banca"
                     value={exerciseForm.name}
-                    onChangeText={(t) => setExerciseForm({...exerciseForm, name: t})}
+                    onChangeText={(t) => setExerciseForm({ ...exerciseForm, name: t })}
                   />
                 </View>
 
@@ -560,91 +412,32 @@ export const RutinasScreen = () => {
                 </View>
 
                 <View style={styles.seriesEditorList}>
-                  {seriesForm.length === 0 ? (
-                    <View style={styles.seriesEmptySpace} />
-                  ) : (
-                    <View
-                      style={styles.seriesPagerContainer}
-                      onLayout={(event) => {
-                        const width = Math.floor(event.nativeEvent.layout.width);
-                        if (width > 0 && width !== seriesPagerWidth) {
-                          setSeriesPagerWidth(width);
-                        }
-                      }}
-                    >
-                      <View style={styles.seriesPagerHeader}>
-                        <Text style={styles.seriesPagerCount}>Serie {activeSeriesIndex + 1} de {seriesForm.length}</Text>
-                      </View>
-
-                      <ScrollView
-                        horizontal
-                        pagingEnabled
-                        showsHorizontalScrollIndicator={false}
-                        onMomentumScrollEnd={(event) => {
-                          const width = event.nativeEvent.layoutMeasurement.width;
-                          if (width <= 0) {
-                            return;
-                          }
-                          const nextIndex = Math.round(event.nativeEvent.contentOffset.x / width);
-                          const maxIndex = Math.max(seriesForm.length - 1, 0);
-                          setActiveSeriesIndex(Math.min(Math.max(nextIndex, 0), maxIndex));
-                        }}
-                      >
-                        {seriesForm.map((serie, index) => (
-                          <View
-                            key={`${index}-${exerciseForm.seriesCount}`}
-                            style={[
-                              styles.seriesEditorCard,
-                              styles.seriesSlide,
-                              seriesPagerWidth > 0 ? { width: seriesPagerWidth } : null,
-                            ]}
-                          >
-                            <Text style={styles.seriesEditorTitle}>Serie {index + 1}</Text>
-                            <View style={styles.rowInputs}>
-                              <View style={{ flex: 1, marginRight: 5 }}>
-                                <NumberStepper
-                                  label="Reps"
-                                  valueText={serie.reps}
-                                  onChangeText={(value) => {
-                                    const sanitized = sanitizeIntText(value);
-                                    setSeriesForm((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, reps: sanitized } : item));
-                                  }}
-                                  onDecrement={() => updateSeriesNumber(index, 'reps', (parseInt(serie.reps, 10) || 0) - 1)}
-                                  onIncrement={() => updateSeriesNumber(index, 'reps', (parseInt(serie.reps, 10) || 0) + 1)}
-                                />
-                              </View>
-                              <View style={{ flex: 1, marginLeft: 5 }}>
-                                <NumberStepper
-                                  label="Peso (kg)"
-                                  valueText={serie.weight}
-                                  onChangeText={(value) => {
-                                    const sanitized = sanitizeWeightText(value);
-                                    setSeriesForm((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, weight: sanitized } : item));
-                                  }}
-                                  onDecrement={() => updateSeriesNumber(index, 'weight', Math.round((parseFloat(serie.weight.replace(',', '.')) || 0) - 1))}
-                                  onIncrement={() => updateSeriesNumber(index, 'weight', Math.round((parseFloat(serie.weight.replace(',', '.')) || 0) + 1))}
-                                />
-                              </View>
-                            </View>
-                          </View>
-                        ))}
-                      </ScrollView>
-
-                      {seriesForm.length > 1 && (
-                        <View style={styles.seriesDotsRow}>
-                          {seriesForm.map((_, index) => (
-                            <View
-                              key={`dot-${index}`}
-                              style={[
-                                styles.seriesDot,
-                                index === activeSeriesIndex && styles.seriesDotActive,
-                              ]}
-                            />
-                          ))}
-                        </View>
-                      )}
-                    </View>
-                  )}
+                  <SeriesPagerEditor
+                    series={seriesForm}
+                    activeSeriesIndex={activeSeriesIndex}
+                    seriesCountKey={exerciseForm.seriesCount}
+                    onActiveSeriesIndexChange={setActiveSeriesIndex}
+                    onRepsChange={(index, value) => {
+                      const sanitized = sanitizeIntText(value);
+                      setSeriesForm((current) =>
+                        current.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, reps: sanitized } : item
+                        )
+                      );
+                    }}
+                    onWeightChange={(index, value) => {
+                      const sanitized = sanitizeWeightText(value);
+                      setSeriesForm((current) =>
+                        current.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, weight: sanitized } : item
+                        )
+                      );
+                    }}
+                    onRepsDecrement={(index) => updateSeriesNumber(index, 'reps', (parseInt(seriesForm[index]?.reps ?? '0', 10) || 0) - 1)}
+                    onRepsIncrement={(index) => updateSeriesNumber(index, 'reps', (parseInt(seriesForm[index]?.reps ?? '0', 10) || 0) + 1)}
+                    onWeightDecrement={(index) => updateSeriesNumber(index, 'weight', Math.round((parseFloat((seriesForm[index]?.weight ?? '0').replace(',', '.')) || 0) - 1))}
+                    onWeightIncrement={(index) => updateSeriesNumber(index, 'weight', Math.round((parseFloat((seriesForm[index]?.weight ?? '0').replace(',', '.')) || 0) + 1))}
+                  />
                 </View>
               </ScrollView>
 
@@ -669,34 +462,30 @@ export const RutinasScreen = () => {
           </KeyboardAvoidingView>
         </Modal>
 
-        {/* MODAL EDITAR RUTINA */}
         <Modal visible={isRoutineModalVisible} transparent animationType="fade">
-            <KeyboardAvoidingView 
-              behavior="padding" 
-              style={styles.modalOverlay}
-            >
-                <View style={styles.modalContent}>
-                    <Text style={styles.modalTitle}>Editar Nombre Rutina</Text>
-                    <TextInput style={styles.input} placeholder="Nombre de la rutina" value={routineName} onChangeText={setRoutineName} autoFocus />
-                    
-                    <View style={styles.modalActionsRowEnd}>
-                        <TouchableOpacity style={styles.cancelBtn} onPress={() => setRoutineModalVisible(false)}>
-                            <Text style={styles.cancelBtnText}>Cancelar</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.saveBtn} onPress={saveRoutine}>
-                            <Text style={styles.saveBtnText}>Guardar</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </KeyboardAvoidingView>
+          <KeyboardAvoidingView
+            behavior="padding"
+            style={styles.modalOverlay}
+          >
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Editar Nombre Rutina</Text>
+              <TextInput style={styles.input} placeholder="Nombre de la rutina" value={routineName} onChangeText={setRoutineName} autoFocus />
+
+              <View style={styles.modalActionsRowEnd}>
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => setRoutineModalVisible(false)}>
+                  <Text style={styles.cancelBtnText}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveBtn} onPress={saveRoutine}>
+                  <Text style={styles.saveBtnText}>Guardar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
         </Modal>
       </SafeAreaView>
     );
   }
 
-  // ==========================================
-  // VISTA PRINCIPAL (LISTADO DE RUTINAS)
-  // ==========================================
   return (
     <SafeAreaView style={styles.container}>
       <View style={[styles.header, { justifyContent: 'space-between' }]}>
@@ -711,10 +500,10 @@ export const RutinasScreen = () => {
         keyExtractor={(item) => item._id.toHexString()}
         contentContainerStyle={{ paddingVertical: 10 }}
         renderItem={({ item }) => (
-          <TouchableOpacity 
-            activeOpacity={0.8} 
-            onPress={() => setSelectedRoutine(item)} 
-            onLongPress={() => openRoutineModal(item)} 
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => setSelectedRoutine(item)}
+            onLongPress={() => openRoutineModal(item)}
             style={styles.routineCard}
           >
             <View style={styles.cardHeader}>
@@ -724,9 +513,9 @@ export const RutinasScreen = () => {
                   {item.exercises.length} ejercicios • {item.createdAt.toLocaleDateString()}
                 </Text>
               </View>
-              
-              <TouchableOpacity 
-                style={styles.playButton} 
+
+              <TouchableOpacity
+                style={styles.playButton}
                 onPress={() => startRoutine(item)}
               >
                 <Text style={styles.playButtonText}>Empezar</Text>
@@ -735,27 +524,26 @@ export const RutinasScreen = () => {
           </TouchableOpacity>
         )}
         ListEmptyComponent={
-          <Text style={styles.emptyText}>No tienes rutinas aún. ¡Añade una!</Text>
+          <Text style={styles.emptyText}>No tienes rutinas aun. Anade una.</Text>
         }
       />
 
-      {/* MODAL CREAR/EDITAR RUTINA */}
       <Modal visible={isRoutineModalVisible} transparent animationType="fade">
-        <KeyboardAvoidingView 
-          behavior="padding" 
+        <KeyboardAvoidingView
+          behavior="padding"
           style={styles.modalOverlay}
         >
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>{editingRoutine ? 'Editar Rutina' : 'Nueva Rutina'}</Text>
             <TextInput style={styles.input} placeholder="Nombre de la rutina" value={routineName} onChangeText={setRoutineName} autoFocus />
-            
+
             <View style={styles.modalActionsRowEnd}>
-                <TouchableOpacity style={styles.cancelBtn} onPress={() => setRoutineModalVisible(false)}>
-                    <Text style={styles.cancelBtnText}>Cancelar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.saveBtn} onPress={saveRoutine}>
-                    <Text style={styles.saveBtnText}>Guardar</Text>
-                </TouchableOpacity>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setRoutineModalVisible(false)}>
+                <Text style={styles.cancelBtnText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.saveBtn} onPress={saveRoutine}>
+                <Text style={styles.saveBtnText}>Guardar</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </KeyboardAvoidingView>
@@ -764,110 +552,3 @@ export const RutinasScreen = () => {
     </SafeAreaView>
   );
 };
-
-// ==========================================
-// ESTILOS
-// ==========================================
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.bg },
-  header: { 
-    paddingHorizontal: 20, paddingVertical: 15, flexDirection: 'row', 
-    alignItems: 'center', backgroundColor: COLORS.cardBg, 
-    borderBottomWidth: 1, borderBottomColor: COLORS.border,
-  },
-  headerTitleContainer: { flex: 1, marginRight: 10 },
-  title: { fontSize: 24, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
-  backButton: { marginRight: 15, padding: 5 },
-  backButtonText: { color: COLORS.primary, fontSize: 28, fontWeight: '300' },
-  
-  headerRightActions: { flexDirection: 'row', alignItems: 'center' },
-  iconButton: { paddingHorizontal: 10, paddingVertical: 6, marginRight: 5 },
-  deleteButtonTextMinimal: { color: COLORS.danger, fontWeight: '600', fontSize: 16  },
-  
-  addButtonMinimal: { paddingHorizontal: 12, paddingVertical: 6 },
-  addButtonTextMinimal: { color: COLORS.primary, fontWeight: '600', fontSize: 16 },
-  
-  routineCard: { 
-    backgroundColor: COLORS.cardBg, padding: 24, marginHorizontal: 16, 
-    marginTop: 16, borderRadius: 16,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08, shadowRadius: 10, elevation: 3, 
-  },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cardTitle: { fontSize: 20, fontWeight: '700', color: COLORS.text, marginBottom: 4 },
-  cardSubtitle: { fontSize: 14, color: COLORS.subText },
-  
-  // Estilos del nuevo botón "Empezar"
-  playButton: {
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    marginLeft: 10,
-  },
-  playButtonText: {
-    color: COLORS.cardBg,
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  
-  exerciseItem: { 
-    backgroundColor: COLORS.cardBg, paddingHorizontal: 20, paddingVertical: 18, 
-    borderBottomWidth: 1, borderBottomColor: COLORS.border 
-  },
-  exerciseHeader: { marginBottom: 12 },
-  exerciseTitle: { fontSize: 18, fontWeight: '600', color: COLORS.text },
-  tagContainer: { flexDirection: 'row' },
-  dataTag: { backgroundColor: COLORS.tagBg, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, marginRight: 8 },
-  tagText: { color: COLORS.subText, fontSize: 13, fontWeight: '600' },
-  swipeDeleteAction: { backgroundColor: COLORS.danger, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 22 },
-  swipeDeleteText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
-
-  emptyText: { textAlign: 'center', marginTop: 60, color: COLORS.subText, fontSize: 16, paddingHorizontal: 40 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 },
-  modalContent: { backgroundColor: COLORS.cardBg, borderRadius: 16, padding: 24, elevation: 10, maxHeight: '90%' },
-  modalScrollContent: { paddingBottom: 30 },
-  modalFooter: { borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: 12, marginTop: 4 },
-  modalTitle: { fontSize: 22, fontWeight: 'bold', marginBottom: 20, color: COLORS.text },
-  inputGroup: { marginBottom: 16 },
-  inputLabel: { color: COLORS.text, fontSize: 14, fontWeight: '700', marginBottom: 8 },
-  input: { 
-    backgroundColor: COLORS.bg, borderWidth: 1, borderColor: COLORS.border, 
-    borderRadius: 8, padding: 14, fontSize: 16, marginBottom: 15, color: COLORS.text
-  },
-  rowInputs: { flexDirection: 'row', justifyContent: 'space-between' },
-  stepperBlock: { marginBottom: 0 },
-  stepperRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.bg, borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 8 },
-  stepperButton: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#E6EEF8', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  stepperButtonText: { color: COLORS.primary, fontSize: 20, fontWeight: '700', marginTop: -1 },
-  stepperInputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginHorizontal: 8 },
-  stepperInput: { flex: 1, color: COLORS.text, fontSize: 20, fontWeight: '500', textAlign: 'center', paddingVertical: 0, minWidth: 24 },
-  stepperSuffix: { color: COLORS.text, fontSize: 16, fontWeight: '500', marginLeft: 4 },
-  seriesEditorList: { marginBottom: 4 },
-  seriesEditorCard: { backgroundColor: COLORS.bg, borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, padding: 12, marginBottom: 12 },
-  seriesEditorTitle: { fontSize: 15, fontWeight: '700', color: COLORS.text, marginBottom: 10 },
-  
-  modalActionsRow: { 
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 15 
-  },
-  modalActionsRowEnd: { 
-    flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 15 
-  },
-  
-  modalActionsGroup: { flexDirection: 'row', alignItems: 'center' },
-  deleteActionBtn: { paddingVertical: 10, paddingHorizontal: 10 },
-  deleteActionText: { color: COLORS.danger, fontWeight: '600', fontSize: 16 },
-
-  cancelBtn: { paddingVertical: 10, paddingHorizontal: 15, marginRight: 10 },
-  cancelBtnText: { color: COLORS.subText, fontWeight: '600', fontSize: 16 },
-  saveBtn: { backgroundColor: COLORS.primary, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 8 },
-  saveBtnText: { color: COLORS.cardBg, fontWeight: '600', fontSize: 16 },
-  seriesEmptySpace: { height: 0 },
-  seriesPagerContainer: { marginBottom: 8 },
-  seriesPagerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  seriesPagerCount: { fontSize: 12, color: '#374151', fontWeight: '700' },
-  seriesSlide: { marginBottom: 0 },
-  seriesDotsRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 10, marginBottom: 4, gap: 6 },
-  seriesDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#D1D5DB' },
-  seriesDotActive: { width: 18, backgroundColor: '#007AFF' },
-});

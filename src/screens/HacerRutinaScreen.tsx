@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, Modal, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Alert, Modal, TextInput, KeyboardAvoidingView, Platform, ScrollView, StyleSheet } from 'react-native';
 import { useRealm, useQuery } from '@realm/react';
 import { useNavigation, CommonActions } from '@react-navigation/native';
 import Realm from 'realm';
@@ -9,50 +9,20 @@ import { Routine, RoutineStatus } from '../models/Routine';
 import { HistoryRoutine } from '../models/HistoryRoutine';
 import { Exercise } from '../models/Exercise';
 import { Serie } from '../models/Serie';
-
-type SeriesFormItem = {
-  reps: string;
-  weight: string;
-};
-
-const MAX_SERIES = 10;
-const MIN_SERIES = 1;
-
-type NumberStepperProps = {
-  label: string;
-  valueText: string;
-  onChangeText: (text: string) => void;
-  onDecrement: () => void;
-  onIncrement: () => void;
-  suffix?: string;
-};
-
-const NumberStepper = ({ label, valueText, onChangeText, onDecrement, onIncrement, suffix }: NumberStepperProps) => {
-  return (
-    <View style={styles.stepperBlock}>
-      {!!label && <Text style={styles.inputLabel}>{label}</Text>}
-      <View style={styles.stepperRow}>
-        <TouchableOpacity onPress={onDecrement} style={styles.stepperButton} activeOpacity={0.7}>
-          <Text style={styles.stepperButtonText}>−</Text>
-        </TouchableOpacity>
-
-        <View style={styles.stepperInputWrap}>
-          <TextInput
-            style={styles.stepperInput}
-            keyboardType="numeric"
-            value={valueText}
-            onChangeText={onChangeText}
-          />
-          {suffix && <Text style={styles.stepperSuffix}>{suffix}</Text>}
-        </View>
-
-        <TouchableOpacity onPress={onIncrement} style={styles.stepperButton} activeOpacity={0.7}>
-          <Text style={styles.stepperButtonText}>+</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-};
+import { styles } from '../styles/HacerRutinaScreen.styles';
+import { NumberStepper } from '../components/routines/NumberStepper';
+import { SeriesPagerEditor } from '../components/routines/SeriesPagerEditor';
+import {
+  SeriesFormItem,
+  MAX_SERIES,
+  MIN_SERIES,
+  buildSeriesList,
+  normalizeSeriesFormCount,
+  sanitizeIntText,
+  sanitizeWeightText,
+  syncExerciseSeries,
+} from '../utils/routines/seriesForm';
+import { clearDraftRoutines, cloneExerciseData, createDraftFromTemplate } from '../utils/routines/drafts';
 
 export const HacerRutinaScreen = () => {
   const realm = useRealm();
@@ -64,17 +34,15 @@ export const HacerRutinaScreen = () => {
 
   const [startTime, setStartTime] = useState<Date | null>(null);
 
-  // --- ESTADOS DEL MODAL ---
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
   const [selectedExercise, setSelectedExercise] = useState<Exercise | null>(null);
-  
+
   const [editName, setEditName] = useState('');
   const [editSeriesCount, setEditSeriesCount] = useState('');
   const [editRest, setEditRest] = useState('');
   const [editSeries, setEditSeries] = useState<SeriesFormItem[]>([]);
   const [activeSeriesIndex, setActiveSeriesIndex] = useState(0);
-  const [seriesPagerWidth, setSeriesPagerWidth] = useState(0);
 
   const getSeriesCountValue = () => {
     const parsed = parseInt(editSeriesCount, 10);
@@ -88,9 +56,19 @@ export const HacerRutinaScreen = () => {
     return Math.max(0, parsed);
   };
 
+  const normalizeSeriesCount = (countText: string) => {
+    const normalized = normalizeSeriesFormCount(editSeries, countText, MIN_SERIES, MAX_SERIES);
+
+    if (!normalized) {
+      return;
+    }
+
+    setEditSeriesCount(normalized.countText);
+    setEditSeries(normalized.series);
+  };
+
   const setSeriesCountValue = (nextValue: number) => {
     const clamped = Math.max(MIN_SERIES, Math.min(MAX_SERIES, nextValue));
-    setEditSeriesCount(String(clamped));
     normalizeSeriesCount(String(clamped));
   };
 
@@ -99,13 +77,11 @@ export const HacerRutinaScreen = () => {
     setEditRest(String(safeValue));
   };
 
-  // --- ESTADO DEL TEMPORIZADOR ---
   const [activeRestId, setActiveRestId] = useState<string | null>(null);
   const [restTimeRemaining, setRestTimeRemaining] = useState(0);
 
   const isFinishing = useRef(false);
 
-  // --- TEMPORIZADOR DE DESCANSO ---
   useEffect(() => {
     if (activeRestId === null) {
       return;
@@ -128,9 +104,8 @@ export const HacerRutinaScreen = () => {
     return () => {
       clearInterval(interval);
     };
-  }, [activeRestId]);
+  }, [activeRestId, restTimeRemaining]);
 
-  // Cerrar temporizador automáticamente cuando llega a 0
   useEffect(() => {
     if (restTimeRemaining === 0 && activeRestId !== null) {
       const timer = setTimeout(() => {
@@ -146,83 +121,6 @@ export const HacerRutinaScreen = () => {
     setRestTimeRemaining(0);
   };
 
-  const clearDraftRoutines = () => {
-    const allDrafts = realm.objects(Routine).filtered('status == $0', RoutineStatus.DRAFT);
-
-    allDrafts.forEach((draft) => {
-      draft.exercises.forEach((exercise) => {
-        realm.delete(exercise.series);
-      });
-      realm.delete(draft.exercises);
-    });
-
-    realm.delete(allDrafts);
-  };
-
-  const cloneExerciseData = (exercise: Exercise) => ({
-    _id: new Realm.BSON.UUID(),
-    name: exercise.name,
-    descanso: exercise.descanso,
-    series: exercise.series.map((serie) => ({
-      _id: new Realm.BSON.UUID(),
-      reps: serie.reps,
-      weight: serie.weight,
-      completed: serie.completed,
-    })),
-  });
-
-  const normalizeSeriesCount = (countText: string) => {
-    const count = parseInt(countText, 10);
-
-    if (isNaN(count) || count < 1) {
-      return;
-    }
-
-    const cappedCount = Math.min(count, MAX_SERIES);
-
-    if (cappedCount !== count) {
-      setEditSeriesCount(String(MAX_SERIES));
-    }
-
-    setEditSeries([{reps: '1', weight: '1'}])
-  };
-
-  const syncExerciseSeries = (exercise: Exercise, seriesData: SeriesFormItem[]) => {
-    while (exercise.series.length > seriesData.length) {
-      const lastSeries = exercise.series[exercise.series.length - 1];
-      realm.delete(lastSeries);
-    }
-
-    while (exercise.series.length < seriesData.length) {
-      const seriesIndex = exercise.series.length;
-      const seriesForm = seriesData[seriesIndex] ?? seriesData[seriesData.length - 1];
-      exercise.series.push(
-        realm.create(Serie, {
-          _id: new Realm.BSON.UUID(),
-          reps: parseInt(seriesForm.reps, 10) || 0,
-          weight: parseFloat(seriesForm.weight.replace(',', '.')) || 0,
-          completed: false,
-        })
-      );
-    }
-
-    exercise.series.forEach((serie, index) => {
-      const seriesForm = seriesData[index] ?? seriesData[seriesData.length - 1];
-      serie.reps = parseInt(seriesForm.reps, 10) || 0;
-      serie.weight = parseFloat(seriesForm.weight.replace(',', '.')) || 0;
-    });
-  };
-
-  const buildSeriesList = (seriesData: SeriesFormItem[]) => {
-    return seriesData.map((serie) => ({
-      _id: new Realm.BSON.UUID(),
-      reps: parseInt(serie.reps, 10) || 0,
-      weight: parseFloat(serie.weight.replace(',', '.')) || 0,
-      completed: false,
-    }));
-  };
-
-  // --- INTERCEPTAR NAVEGACIÓN ---
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
       if (!activeRoutine || isFinishing.current) {
@@ -232,64 +130,39 @@ export const HacerRutinaScreen = () => {
       e.preventDefault();
 
       Alert.alert(
-        "Cancelar Entrenamiento",
-        "Si sales ahora se perderá tu progreso y no se guardará en el historial. ¿Estás seguro?",
+        'Cancelar Entrenamiento',
+        'Si sales ahora se perdera tu progreso y no se guardara en el historial. Estas seguro?',
         [
-          { text: "Continuar entrenando", style: "cancel" },
+          { text: 'Continuar entrenando', style: 'cancel' },
           {
-            text: "Sí, cancelar rutina",
-            style: "destructive",
+            text: 'Si, cancelar rutina',
+            style: 'destructive',
             onPress: () => {
               realm.write(() => {
-                clearDraftRoutines();
+                clearDraftRoutines(realm);
               });
               setStartTime(null);
-              
+
               isFinishing.current = true;
               navigation.dispatch(e.data.action);
-            }
-          }
+            },
+          },
         ]
       );
     });
 
     return unsubscribe;
-  }, [navigation, activeRoutine]);
+  }, [navigation, activeRoutine, realm]);
 
   useEffect(() => {
     if (activeRoutine && !startTime) {
       setStartTime(new Date());
     }
-  }, [activeRoutine]);
+  }, [activeRoutine, startTime]);
 
-  // --- INICIAR Y FINALIZAR ---
   const handleStartRoutine = (template: Routine) => {
     realm.write(() => {
-      clearDraftRoutines();
-
-      const draft = realm.create(Routine, {
-        _id: new Realm.BSON.UUID(),
-        name: template.name,
-        status: RoutineStatus.DRAFT,
-        createdAt: new Date(),
-        exercises: [],
-      });
-
-      template.exercises.forEach((exercise) => {
-        const copiedExercise = realm.create(Exercise, {
-          _id: new Realm.BSON.UUID(),
-          name: exercise.name,
-          descanso: exercise.descanso,
-          series: exercise.series.map((serie) => ({
-            _id: new Realm.BSON.UUID(),
-            reps: serie.reps,
-            weight: serie.weight,
-            completed: false,
-          })),
-        });
-
-        draft.exercises.push(copiedExercise);
-      });
+      createDraftFromTemplate(realm, template, true);
     });
   };
 
@@ -298,19 +171,19 @@ export const HacerRutinaScreen = () => {
 
     if (activeRoutine.exercises.length === 0) {
       Alert.alert(
-        "Entrenamiento vacío",
-        "Tu rutina actual no tiene ejercicios. ¿Quieres descartar este entrenamiento?",
+        'Entrenamiento vacio',
+        'Tu rutina actual no tiene ejercicios. Quieres descartar este entrenamiento?',
         [
-          { text: "Volver y añadir", style: "cancel" },
+          { text: 'Volver y anadir', style: 'cancel' },
           {
-            text: "Descartar rutina",
-            style: "destructive",
+            text: 'Descartar rutina',
+            style: 'destructive',
             onPress: () => {
               realm.write(() => {
-                clearDraftRoutines();
+                clearDraftRoutines(realm);
               });
               setStartTime(null);
-              
+
               isFinishing.current = true;
               navigation.dispatch(
                 CommonActions.reset({
@@ -318,19 +191,19 @@ export const HacerRutinaScreen = () => {
                   routes: [{ name: 'RutinasList' }],
                 })
               );
-            }
-          }
+            },
+          },
         ]
       );
-      return; 
+      return;
     }
 
     const allCompleted = activeRoutine.exercises.every((exercise) => exercise.isCompleted);
-    
+
     if (!allCompleted) {
       Alert.alert(
-        "¡Entrenamiento incompleto!", 
-        "Debes completar todas las series antes de poder finalizar el entrenamiento."
+        'Entrenamiento incompleto',
+        'Debes completar todas las series antes de poder finalizar el entrenamiento.'
       );
       return;
     }
@@ -351,9 +224,7 @@ export const HacerRutinaScreen = () => {
       });
 
       activeRoutine.exercises.forEach((exercise) => {
-        historyRoutine.exercises.push(
-          realm.create(Exercise, cloneExerciseData(exercise))
-        );
+        historyRoutine.exercises.push(realm.create(Exercise, cloneExerciseData(exercise)));
       });
 
       activeRoutine.exercises.forEach((exercise) => {
@@ -378,7 +249,6 @@ export const HacerRutinaScreen = () => {
   };
 
   const toggleSerieComplete = (serie: Serie, exercise: Exercise) => {
-    // Capturar valores ANTES de escribir en Realm
     const serieId = serie._id.toHexString();
     const descanso = exercise.descanso;
     const wasCompleted = serie.completed;
@@ -387,14 +257,12 @@ export const HacerRutinaScreen = () => {
       serie.completed = !serie.completed;
     });
 
-    // Si la serie acaba de completarse, inicia el temporizador
     if (!wasCompleted && descanso > 0) {
       setActiveRestId(serieId);
       setRestTimeRemaining(descanso);
     }
   };
 
-  // --- GESTIÓN DE EJERCICIOS (MODAL) ---
   const openEditModal = (exercise: Exercise) => {
     setModalMode('edit');
     setSelectedExercise(exercise);
@@ -417,7 +285,7 @@ export const HacerRutinaScreen = () => {
     setEditName('');
     setEditSeriesCount('1');
     setActiveSeriesIndex(0);
-    normalizeSeriesCount('1');
+    setEditSeries([{ reps: '1', weight: '1' }]);
     setEditRest('0');
     setIsModalVisible(true);
   };
@@ -429,7 +297,7 @@ export const HacerRutinaScreen = () => {
 
   const handleSaveExercise = () => {
     if (!editName.trim()) {
-      Alert.alert("Error", "El nombre del ejercicio no puede estar vacío.");
+      Alert.alert('Error', 'El nombre del ejercicio no puede estar vacio.');
       return;
     }
 
@@ -443,7 +311,7 @@ export const HacerRutinaScreen = () => {
     });
 
     if (isNaN(numSeries) || isNaN(numRest) || numSeries < 1 || numRest < 0 || invalidSeries || editSeries.length !== numSeries) {
-      Alert.alert("Datos inválidos", "Por favor, introduce números válidos.");
+      Alert.alert('Datos invalidos', 'Por favor, introduce numeros validos.');
       return;
     }
 
@@ -451,7 +319,7 @@ export const HacerRutinaScreen = () => {
       if (modalMode === 'edit' && selectedExercise) {
         selectedExercise.name = editName;
         selectedExercise.descanso = numRest;
-        syncExerciseSeries(selectedExercise, editSeries);
+        syncExerciseSeries(realm, selectedExercise, editSeries);
       } else if (modalMode === 'create' && activeRoutine) {
         const newExercise = realm.create(Exercise, {
           _id: new Realm.BSON.UUID(),
@@ -470,21 +338,21 @@ export const HacerRutinaScreen = () => {
     if (!selectedExercise) return;
 
     Alert.alert(
-      "Eliminar ejercicio",
-      "¿Estás seguro de que quieres quitar este ejercicio de tu sesión de hoy?",
+      'Eliminar ejercicio',
+      'Estas seguro de que quieres quitar este ejercicio de tu sesion de hoy?',
       [
-        { text: "Cancelar", style: "cancel" },
+        { text: 'Cancelar', style: 'cancel' },
         {
-          text: "Eliminar",
-          style: "destructive",
+          text: 'Eliminar',
+          style: 'destructive',
           onPress: () => {
             realm.write(() => {
               realm.delete(selectedExercise.series);
               realm.delete(selectedExercise);
             });
             closeEditModal();
-          }
-        }
+          },
+        },
       ]
     );
   };
@@ -501,24 +369,19 @@ export const HacerRutinaScreen = () => {
     }
   }, [editSeries.length, activeSeriesIndex]);
 
-  // =======================================================
   return (
     <View style={styles.container}>
-      {/* --- MODAL PARA AÑADIR/EDITAR EJERCICIO --- */}
       <Modal visible={isModalVisible} animationType="slide" transparent={true} onRequestClose={closeEditModal}>
-        <KeyboardAvoidingView 
-          behavior="padding" 
-          style={styles.modalOverlay}
-        >
+        <KeyboardAvoidingView behavior="padding" style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <ScrollView 
-              showsVerticalScrollIndicator={false} 
+            <ScrollView
+              showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
-              contentContainerStyle={{ flexGrow: 1, paddingBottom: 30 }} 
+              contentContainerStyle={{ flexGrow: 1, paddingBottom: 30 }}
             >
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>
-                  {modalMode === 'create' ? 'Añadir Ejercicio' : 'Ajustar Ejercicio'}
+                  {modalMode === 'create' ? 'Anadir Ejercicio' : 'Ajustar Ejercicio'}
                 </Text>
               </View>
 
@@ -537,7 +400,7 @@ export const HacerRutinaScreen = () => {
                   label="Series"
                   valueText={editSeriesCount}
                   onChangeText={(value) => {
-                    const sanitized = value.replace(/[^0-9]/g, '');
+                    const sanitized = sanitizeIntText(value);
                     setEditSeriesCount(sanitized);
                     if (sanitized) {
                       normalizeSeriesCount(sanitized);
@@ -551,7 +414,7 @@ export const HacerRutinaScreen = () => {
                   label="Descanso entre series (segundos)"
                   valueText={editRest}
                   onChangeText={(value) => {
-                    const sanitized = value.replace(/[^0-9]/g, '');
+                    const sanitized = sanitizeIntText(value);
                     setEditRest(sanitized);
                   }}
                   onDecrement={() => setRestValue(Math.max(0, getRestValue() - 15))}
@@ -559,129 +422,60 @@ export const HacerRutinaScreen = () => {
                 />
 
                 <View style={styles.seriesEditorList}>
-                  {editSeries.length === 0 ? (
-                    <View style={styles.seriesEmptySpace} />
-                  ) : (
-                    <View
-                      style={styles.seriesPagerContainer}
-                      onLayout={(event) => {
-                        const width = Math.floor(event.nativeEvent.layout.width);
-                        if (width > 0 && width !== seriesPagerWidth) {
-                          setSeriesPagerWidth(width);
-                        }
-                      }}
-                    >
-                      <View style={styles.seriesPagerHeader}>
-                        <Text style={styles.seriesPagerCount}>Serie {activeSeriesIndex + 1} de {editSeries.length}</Text>
-                      </View>
-
-                      <ScrollView
-                        horizontal
-                        pagingEnabled
-                        showsHorizontalScrollIndicator={false}
-                        onMomentumScrollEnd={(event) => {
-                          const width = event.nativeEvent.layoutMeasurement.width;
-                          if (width <= 0) {
-                            return;
-                          }
-                          const nextIndex = Math.round(event.nativeEvent.contentOffset.x / width);
-                          const maxIndex = Math.max(editSeries.length - 1, 0);
-                          setActiveSeriesIndex(Math.min(Math.max(nextIndex, 0), maxIndex));
-                        }}
-                      >
-                        {editSeries.map((serie, index) => (
-                          <View
-                            key={`${index}-${editSeriesCount}`}
-                            style={[
-                              styles.seriesEditorCard,
-                              styles.seriesSlide,
-                              seriesPagerWidth > 0 ? { width: seriesPagerWidth } : null,
-                            ]}
-                          >
-                            <Text style={styles.seriesEditorTitle}>Serie {index + 1}</Text>
-                            <View style={styles.rowInputs}>
-                              <View style={{ flex: 1, marginRight: 5 }}>
-                                <NumberStepper
-                                  label="Reps"
-                                  valueText={serie.reps}
-                                  onChangeText={(value) => {
-                                    const sanitized = value.replace(/[^0-9]/g, '');
-                                    setEditSeries((current) => 
-                                      current.map((item, itemIndex) => 
-                                        itemIndex === index ? { ...item, reps: sanitized } : item
-                                      )
-                                    );
-                                  }}
-                                  onDecrement={() => {
-                                    const repsValue = parseInt(serie.reps, 10) || 0;
-                                    setEditSeries((current) =>
-                                      current.map((item, itemIndex) =>
-                                        itemIndex === index ? { ...item, reps: String(Math.max(0, repsValue - 1)) } : item
-                                      )
-                                    );
-                                  }}
-                                  onIncrement={() => {
-                                    const repsValue = parseInt(serie.reps, 10) || 0;
-                                    setEditSeries((current) =>
-                                      current.map((item, itemIndex) =>
-                                        itemIndex === index ? { ...item, reps: String(repsValue + 1) } : item
-                                      )
-                                    );
-                                  }}
-                                />
-                              </View>
-                              <View style={{ flex: 1, marginLeft: 5 }}>
-                                <NumberStepper
-                                  label="Peso (kg)"
-                                  valueText={serie.weight}
-                                  onChangeText={(value) => {
-                                    const sanitized = value.replace(/[^0-9.,]/g, '').replace(',', '.');
-                                    const firstDot = sanitized.indexOf('.');
-                                    const formatted = firstDot === -1 ? sanitized : sanitized.slice(0, firstDot + 1) + sanitized.slice(firstDot + 1).replace(/\./g, '');
-                                    setEditSeries((current) =>
-                                      current.map((item, itemIndex) =>
-                                        itemIndex === index ? { ...item, weight: formatted } : item
-                                      )
-                                    );
-                                  }}
-                                  onDecrement={() => {
-                                    const weightValue = Math.round((parseFloat(serie.weight.replace(',', '.')) || 0) - 1);
-                                    setEditSeries((current) =>
-                                      current.map((item, itemIndex) =>
-                                        itemIndex === index ? { ...item, weight: String(weightValue) } : item
-                                      )
-                                    );
-                                  }}
-                                  onIncrement={() => {
-                                    const weightValue = Math.round((parseFloat(serie.weight.replace(',', '.')) || 0) + 1);
-                                    setEditSeries((current) =>
-                                      current.map((item, itemIndex) =>
-                                        itemIndex === index ? { ...item, weight: String(weightValue) } : item
-                                      )
-                                    );
-                                  }}
-                                />
-                              </View>
-                            </View>
-                          </View>
-                        ))}
-                      </ScrollView>
-
-                      {editSeries.length > 1 && (
-                        <View style={styles.seriesDotsRow}>
-                          {editSeries.map((_, index) => (
-                            <View
-                              key={`dot-${index}`}
-                              style={[
-                                styles.seriesDot,
-                                index === activeSeriesIndex && styles.seriesDotActive,
-                              ]}
-                            />
-                          ))}
-                        </View>
-                      )}
-                    </View>
-                  )}
+                  <SeriesPagerEditor
+                    series={editSeries}
+                    activeSeriesIndex={activeSeriesIndex}
+                    seriesCountKey={editSeriesCount}
+                    onActiveSeriesIndexChange={setActiveSeriesIndex}
+                    onRepsChange={(index, value) => {
+                      const sanitized = sanitizeIntText(value);
+                      setEditSeries((current) =>
+                        current.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, reps: sanitized } : item
+                        )
+                      );
+                    }}
+                    onWeightChange={(index, value) => {
+                      const sanitized = sanitizeWeightText(value);
+                      setEditSeries((current) =>
+                        current.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, weight: sanitized } : item
+                        )
+                      );
+                    }}
+                    onRepsDecrement={(index) => {
+                      const repsValue = parseInt(editSeries[index]?.reps ?? '0', 10) || 0;
+                      setEditSeries((current) =>
+                        current.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, reps: String(Math.max(0, repsValue - 1)) } : item
+                        )
+                      );
+                    }}
+                    onRepsIncrement={(index) => {
+                      const repsValue = parseInt(editSeries[index]?.reps ?? '0', 10) || 0;
+                      setEditSeries((current) =>
+                        current.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, reps: String(repsValue + 1) } : item
+                        )
+                      );
+                    }}
+                    onWeightDecrement={(index) => {
+                      const weightValue = Math.round((parseFloat((editSeries[index]?.weight ?? '0').replace(',', '.')) || 0) - 1);
+                      setEditSeries((current) =>
+                        current.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, weight: String(weightValue) } : item
+                        )
+                      );
+                    }}
+                    onWeightIncrement={(index) => {
+                      const weightValue = Math.round((parseFloat((editSeries[index]?.weight ?? '0').replace(',', '.')) || 0) + 1);
+                      setEditSeries((current) =>
+                        current.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, weight: String(weightValue) } : item
+                        )
+                      );
+                    }}
+                  />
                 </View>
               </View>
 
@@ -704,11 +498,10 @@ export const HacerRutinaScreen = () => {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* --- PANTALLA PRINCIPAL --- */}
       {!activeRoutine ? (
         <>
           <View style={styles.header}>
-            <Text style={styles.title}>¿Qué entrenamos hoy?</Text>
+            <Text style={styles.title}>Que entrenamos hoy?</Text>
             <Text style={styles.subtitleNeutral}>Selecciona una plantilla para empezar</Text>
           </View>
 
@@ -742,9 +535,9 @@ export const HacerRutinaScreen = () => {
             <View>
               <Text style={styles.title}>{activeRoutine.name}</Text>
             </View>
-            <TouchableOpacity 
-              style={styles.cancelSessionBtn} 
-              onPress={() => navigation.goBack()} 
+            <TouchableOpacity
+              style={styles.cancelSessionBtn}
+              onPress={() => navigation.goBack()}
             >
               <Text style={styles.cancelSessionBtnText}>✕ Cancelar</Text>
             </TouchableOpacity>
@@ -756,13 +549,13 @@ export const HacerRutinaScreen = () => {
             contentContainerStyle={styles.listContainer}
             ListFooterComponent={
               <TouchableOpacity style={styles.addExerciseBtn} onPress={openCreateModal}>
-                <Text style={styles.addExerciseBtnText}>+ Añadir ejercicio extra</Text>
+                <Text style={styles.addExerciseBtnText}>+ Anadir ejercicio extra</Text>
               </TouchableOpacity>
             }
             renderItem={({ item }) => {
               const completedSeriesCount = item.series.filter((serie) => serie.completed).length;
               const isCompleted = item.isCompleted;
-              
+
               return (
                 <View style={[styles.exerciseCardWrapper, isCompleted && styles.exerciseCardCompleted]}>
                   <View style={styles.exerciseCardBody}>
@@ -840,7 +633,7 @@ export const HacerRutinaScreen = () => {
           </Modal>
 
           <View style={styles.footer}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.finishButton, isRoutineReadyToFinish ? styles.finishButtonReady : styles.finishButtonPending]}
               onPress={handleFinishRoutine}
             >
@@ -854,115 +647,3 @@ export const HacerRutinaScreen = () => {
     </View>
   );
 };
-
-// --- ESTILOS ---
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F3F4F6' },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
-  header: { padding: 20, backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E5E7EB' },
-  title: { fontSize: 24, fontWeight: 'bold', color: '#111827' },
-  subtitleActive: { fontSize: 16, color: '#EF4444', marginTop: 4, fontWeight: '600' },
-  subtitleNeutral: { fontSize: 16, color: '#6B7280', marginTop: 4 },
-  emoji: { fontSize: 60, marginBottom: 20 },
-  emptyText: { fontSize: 18, fontWeight: 'bold', color: '#374151', textAlign: 'center' },
-  listContainer: { padding: 16, paddingBottom: 100 },
-  
-  templateCard: { backgroundColor: '#FFFFFF', borderRadius: 12, padding: 16, marginBottom: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', elevation: 2 },
-  templateName: { fontSize: 18, fontWeight: 'bold', color: '#1F2937' },
-  templateCount: { fontSize: 14, color: '#6B7280', marginTop: 4 },
-  startButton: { backgroundColor: '#3B82F6', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8 },
-  startButtonText: { color: 'white', fontWeight: 'bold', fontSize: 14 },
-
-  exerciseCardWrapper: { backgroundColor: '#FFFFFF', borderRadius: 12, marginBottom: 12, elevation: 2, overflow: 'hidden' },
-  exerciseCardCompleted: { opacity: 0.72, backgroundColor: '#F9FAFB' },
-  exerciseCardBody: { padding: 16 },
-  exerciseHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 },
-  editExerciseButton: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: '#EFF6FF', marginLeft: 12 },
-  editExerciseButtonText: { color: '#2563EB', fontWeight: '700', fontSize: 12 },
-  
-  exerciseName: { fontSize: 18, fontWeight: 'bold', color: '#1F2937', marginBottom: 8 },
-  textCompleted: { textDecorationLine: 'line-through', color: '#6B7280' },
-  exerciseInfoRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, backgroundColor: '#F9FAFB', padding: 10, borderRadius: 8 },
-  exerciseDetails: { fontSize: 15, color: '#4B5563' },
-  bold: { fontWeight: 'bold', color: '#111827' },
-  editIcon: { fontSize: 16, color: '#9CA3AF' },
-
-  seriesList: { marginTop: 14, gap: 10 },
-  seriesRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F9FAFB', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#E5E7EB' },
-  seriesRowCompleted: { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' },
-  seriesCheckbox: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: '#D1D5DB', justifyContent: 'center', alignItems: 'center', marginRight: 12, backgroundColor: '#FFFFFF' },
-  seriesCheckboxChecked: { backgroundColor: '#10B981', borderColor: '#10B981' },
-  seriesCheckmark: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 14, marginTop: -1 },
-  seriesTitle: { fontSize: 15, fontWeight: '700', color: '#1F2937' },
-  seriesSubtitle: { fontSize: 14, color: '#4B5563', marginTop: 2 },
-
-  restOverlayRoot: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  restOverlayAndroidFallback: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(2, 6, 23, 0.72)' },
-  restOverlayDim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(2, 6, 23, 0.42)' },
-  restOverlayContent: { alignItems: 'center', paddingHorizontal: 24 },
-  restOverlayIcon: { fontSize: 40, color: '#3B82F6', marginBottom: 10, fontWeight: '700' },
-  restOverlayTitle: { fontSize: 36, color: '#D5E2F3', fontWeight: '600', marginBottom: 6 },
-  restOverlaySeconds: { fontSize: 116, lineHeight: 116, color: '#3B82F6', fontWeight: '800', marginBottom: 6 },
-  restOverlaySubtitle: { fontSize: 32, color: '#7F92AE', fontWeight: '500', marginBottom: 28 },
-  restOverlaySkipButton: { backgroundColor: '#1E2A3C', borderRadius: 999, paddingVertical: 14, paddingHorizontal: 42 },
-  restOverlaySkipText: { color: '#E9EEF7', fontSize: 32, fontWeight: '700' },
-  
-  addExerciseBtn: { backgroundColor: '#E0E7FF', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 10, borderWidth: 1, borderColor: '#C7D2FE', borderStyle: 'dashed' },
-  addExerciseBtnText: { color: '#4F46E5', fontWeight: 'bold', fontSize: 16 },
-
-  footer: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 16, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#E5E7EB', elevation: 10 },
-  finishButton: { paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
-  finishButtonPending: { backgroundColor: '#A7F3D0' },
-  finishButtonReady: { backgroundColor: '#10B981' },
-  finishButtonText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
-  finishButtonTextPending: { color: '#065F46' },
-  finishButtonTextReady: { color: '#FFFFFF' },
-
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, maxHeight: '90%', elevation: 20 },
-  modalHeader: { marginBottom: 20, alignItems: 'center' },
-  modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#111827' },
-  formContainer: { marginBottom: 24 },
-  inputGroup: { marginBottom: 16 },
-  rowInputs: { flexDirection: 'row', justifyContent: 'space-between' },
-  seriesEditorList: { marginBottom: 8 },
-  seriesEmptySpace: { height: 0 },
-  seriesPagerContainer: { marginBottom: 8 },
-  seriesPagerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  seriesPagerHint: { fontSize: 12, color: '#6B7280', fontWeight: '600' },
-  seriesPagerCount: { fontSize: 12, color: '#374151', fontWeight: '700' },
-  seriesEditorCard: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, padding: 12, marginBottom: 12 },
-  seriesSlide: { marginBottom: 0 },
-  seriesDotsRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 10, marginBottom: 4, gap: 6 },
-  seriesDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#D1D5DB' },
-  seriesDotActive: { width: 18, backgroundColor: '#3B82F6' },
-  seriesEditorTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 10 },
-  inputLabel: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 8 },
-  textInput: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, padding: 12, fontSize: 16, color: '#111827' },
-  numericInput: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, padding: 12, fontSize: 18, color: '#111827', fontWeight: 'bold', textAlign: 'center' },
-  modalActions: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, marginBottom: 20 },
-  cancelButton: { flex: 1, backgroundColor: '#F3F4F6', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
-  cancelButtonText: { color: '#4B5563', fontSize: 16, fontWeight: '600' },
-  saveButton: { flex: 2, backgroundColor: '#3B82F6', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
-  saveButtonText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
-  deleteButton: { marginTop: 10, paddingVertical: 12, alignItems: 'center' },
-  deleteButtonText: { color: '#EF4444', fontSize: 16, fontWeight: '600' },
-  cancelSessionBtn: {
-    backgroundColor: '#FEE2E2', 
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-  },
-  cancelSessionBtnText: {
-    color: '#EF4444', 
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
-  stepperBlock: { marginBottom: 16 },
-  stepperRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 8 },
-  stepperButton: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  stepperButtonText: { color: '#3B82F6', fontSize: 20, fontWeight: '700', marginTop: -1 },
-  stepperInputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginHorizontal: 8 },
-  stepperInput: { flex: 1, color: '#111827', fontSize: 18, fontWeight: '500', textAlign: 'center', paddingVertical: 0, minWidth: 24 },
-  stepperSuffix: { color: '#111827', fontSize: 16, fontWeight: '500', marginLeft: 4 },
-});
