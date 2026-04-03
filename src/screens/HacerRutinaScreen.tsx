@@ -36,6 +36,8 @@ export const HacerRutinaScreen = () => {
   const [editSeriesCount, setEditSeriesCount] = useState('');
   const [editRest, setEditRest] = useState('');
   const [editSeries, setEditSeries] = useState<SeriesFormItem[]>([]);
+  const [activeSeriesIndex, setActiveSeriesIndex] = useState(0);
+  const [seriesPagerWidth, setSeriesPagerWidth] = useState(0);
 
   // --- ESTADO DEL TEMPORIZADOR ---
   const [activeRestId, setActiveRestId] = useState<string | null>(null);
@@ -346,6 +348,7 @@ export const HacerRutinaScreen = () => {
     setSelectedExercise(exercise);
     setEditName(exercise.name);
     setEditSeriesCount(exercise.series.length.toString());
+    setActiveSeriesIndex(0);
     setEditSeries(
       exercise.series.map((serie) => ({
         reps: serie.reps.toString(),
@@ -361,6 +364,7 @@ export const HacerRutinaScreen = () => {
     setSelectedExercise(null);
     setEditName('');
     setEditSeriesCount('');
+    setActiveSeriesIndex(0);
     setEditSeries([]);
     setEditRest('');
     setIsModalVisible(true);
@@ -433,6 +437,18 @@ export const HacerRutinaScreen = () => {
     );
   };
 
+  const isRoutineReadyToFinish =
+    !!activeRoutine &&
+    activeRoutine.exercises.length > 0 &&
+    activeRoutine.exercises.every((exercise) => exercise.isCompleted);
+
+  useEffect(() => {
+    const maxIndex = Math.max(editSeries.length - 1, 0);
+    if (activeSeriesIndex > maxIndex) {
+      setActiveSeriesIndex(maxIndex);
+    }
+  }, [editSeries.length, activeSeriesIndex]);
+
   // =======================================================
   return (
     <View style={styles.container}>
@@ -468,43 +484,95 @@ export const HacerRutinaScreen = () => {
                 <View style={styles.rowInputs}>
                   <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
                     <Text style={styles.inputLabel}>Series</Text>
-                    <TextInput style={styles.numericInput} keyboardType="numeric" value={editSeriesCount} onChangeText={(value) => { setEditSeriesCount(value); normalizeSeriesCount(value); }} placeholder="3" />
+                    <TextInput style={styles.numericInput} keyboardType="numeric" value={editSeriesCount} onChangeText={(value) => { setEditSeriesCount(value); normalizeSeriesCount(value); }} />
                   </View>
                 </View>
 
                 <View style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>Descanso entre series (segundos)</Text>
-                  <TextInput style={styles.numericInput} keyboardType="numeric" value={editRest} onChangeText={setEditRest} placeholder="60" />
+                  <TextInput style={styles.numericInput} keyboardType="numeric" value={editRest} onChangeText={setEditRest} />
                 </View>
 
                 <View style={styles.seriesEditorList}>
-                  {editSeries.map((serie, index) => (
-                    <View key={`${index}-${editSeriesCount}`} style={styles.seriesEditorCard}>
-                      <Text style={styles.seriesEditorTitle}>Serie {index + 1}</Text>
-                      <View style={styles.rowInputs}>
-                        <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
-                          <Text style={styles.inputLabel}>Reps</Text>
-                          <TextInput
-                            style={styles.numericInput}
-                            keyboardType="numeric"
-                            value={serie.reps}
-                            onChangeText={(value) => setEditSeries((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, reps: value } : item))}
-                            placeholder="10"
-                          />
-                        </View>
-                        <View style={[styles.inputGroup, { flex: 1 }]}>
-                          <Text style={styles.inputLabel}>Kg</Text>
-                          <TextInput
-                            style={styles.numericInput}
-                            keyboardType="decimal-pad"
-                            value={serie.weight}
-                            onChangeText={(value) => setEditSeries((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, weight: value } : item))}
-                            placeholder="60"
-                          />
-                        </View>
+                  {editSeries.length === 0 ? (
+                    <View style={styles.seriesEmptySpace} />
+                  ) : (
+                    <View
+                      style={styles.seriesPagerContainer}
+                      onLayout={(event) => {
+                        const width = Math.floor(event.nativeEvent.layout.width);
+                        if (width > 0 && width !== seriesPagerWidth) {
+                          setSeriesPagerWidth(width);
+                        }
+                      }}
+                    >
+                      <View style={styles.seriesPagerHeader}>
+                        <Text style={styles.seriesPagerCount}>Serie {activeSeriesIndex + 1} de {editSeries.length}</Text>
                       </View>
+
+                      <ScrollView
+                        horizontal
+                        pagingEnabled
+                        showsHorizontalScrollIndicator={false}
+                        onMomentumScrollEnd={(event) => {
+                          const width = event.nativeEvent.layoutMeasurement.width;
+                          if (width <= 0) {
+                            return;
+                          }
+                          const nextIndex = Math.round(event.nativeEvent.contentOffset.x / width);
+                          const maxIndex = Math.max(editSeries.length - 1, 0);
+                          setActiveSeriesIndex(Math.min(Math.max(nextIndex, 0), maxIndex));
+                        }}
+                      >
+                        {editSeries.map((serie, index) => (
+                          <View
+                            key={`${index}-${editSeriesCount}`}
+                            style={[
+                              styles.seriesEditorCard,
+                              styles.seriesSlide,
+                              seriesPagerWidth > 0 ? { width: seriesPagerWidth } : null,
+                            ]}
+                          >
+                            <Text style={styles.seriesEditorTitle}>Serie {index + 1}</Text>
+                            <View style={styles.rowInputs}>
+                              <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
+                                <Text style={styles.inputLabel}>Reps</Text>
+                                <TextInput
+                                  style={styles.numericInput}
+                                  keyboardType="numeric"
+                                  value={serie.reps}
+                                  onChangeText={(value) => setEditSeries((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, reps: value } : item))}
+                                />
+                              </View>
+                              <View style={[styles.inputGroup, { flex: 1 }]}>
+                                <Text style={styles.inputLabel}>Kg</Text>
+                                <TextInput
+                                  style={styles.numericInput}
+                                  keyboardType="decimal-pad"
+                                  value={serie.weight}
+                                  onChangeText={(value) => setEditSeries((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, weight: value } : item))}
+                                />
+                              </View>
+                            </View>
+                          </View>
+                        ))}
+                      </ScrollView>
+
+                      {editSeries.length > 1 && (
+                        <View style={styles.seriesDotsRow}>
+                          {editSeries.map((_, index) => (
+                            <View
+                              key={`dot-${index}`}
+                              style={[
+                                styles.seriesDot,
+                                index === activeSeriesIndex && styles.seriesDotActive,
+                              ]}
+                            />
+                          ))}
+                        </View>
+                      )}
                     </View>
-                  ))}
+                  )}
                 </View>
               </View>
 
@@ -519,7 +587,7 @@ export const HacerRutinaScreen = () => {
 
               {modalMode === 'edit' && (
                 <TouchableOpacity style={styles.deleteButton} onPress={handleDeleteExercise}>
-                  <Text style={styles.deleteButtonText}>🗑️ Eliminar este ejercicio</Text>
+                  <Text style={styles.deleteButtonText}>Eliminar este ejercicio</Text>
                 </TouchableOpacity>
               )}
             </ScrollView>
@@ -564,7 +632,6 @@ export const HacerRutinaScreen = () => {
           <View style={[styles.header, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
             <View>
               <Text style={styles.title}>{activeRoutine.name}</Text>
-              <Text style={styles.subtitleActive}>Entrenamiento en curso 🔥</Text>
             </View>
             <TouchableOpacity 
               style={styles.cancelSessionBtn} 
@@ -665,14 +732,12 @@ export const HacerRutinaScreen = () => {
 
           <View style={styles.footer}>
             <TouchableOpacity 
-              style={[
-                styles.finishButton, 
-                (activeRoutine.exercises.length === 0 || !activeRoutine.exercises.every((exercise) => exercise.isCompleted)) 
-                  && { backgroundColor: '#9CA3AF' }
-              ]} 
+              style={[styles.finishButton, isRoutineReadyToFinish ? styles.finishButtonReady : styles.finishButtonPending]}
               onPress={handleFinishRoutine}
             >
-              <Text style={styles.finishButtonText}>🏁 Finalizar Entrenamiento</Text>
+              <Text style={[styles.finishButtonText, isRoutineReadyToFinish ? styles.finishButtonTextReady : styles.finishButtonTextPending]}>
+                Finalizar Entrenamiento
+              </Text>
             </TouchableOpacity>
           </View>
         </>
@@ -737,8 +802,12 @@ const styles = StyleSheet.create({
   addExerciseBtnText: { color: '#4F46E5', fontWeight: 'bold', fontSize: 16 },
 
   footer: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 16, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#E5E7EB', elevation: 10 },
-  finishButton: { backgroundColor: '#10B981', paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
+  finishButton: { paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
+  finishButtonPending: { backgroundColor: '#A7F3D0' },
+  finishButtonReady: { backgroundColor: '#10B981' },
   finishButtonText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
+  finishButtonTextPending: { color: '#065F46' },
+  finishButtonTextReady: { color: '#FFFFFF' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, maxHeight: '90%', elevation: 20 },
@@ -748,7 +817,16 @@ const styles = StyleSheet.create({
   inputGroup: { marginBottom: 16 },
   rowInputs: { flexDirection: 'row', justifyContent: 'space-between' },
   seriesEditorList: { marginBottom: 8 },
+  seriesEmptySpace: { height: 0 },
+  seriesPagerContainer: { marginBottom: 8 },
+  seriesPagerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  seriesPagerHint: { fontSize: 12, color: '#6B7280', fontWeight: '600' },
+  seriesPagerCount: { fontSize: 12, color: '#374151', fontWeight: '700' },
   seriesEditorCard: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, padding: 12, marginBottom: 12 },
+  seriesSlide: { marginBottom: 0 },
+  seriesDotsRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 10, marginBottom: 4, gap: 6 },
+  seriesDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#D1D5DB' },
+  seriesDotActive: { width: 18, backgroundColor: '#3B82F6' },
   seriesEditorTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 10 },
   inputLabel: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 8 },
   textInput: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, padding: 12, fontSize: 16, color: '#111827' },
