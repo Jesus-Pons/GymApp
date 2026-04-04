@@ -13,10 +13,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.tuusuario.gymapp" 
+      "bundleIdentifier": "com.gymappdevs.gymapp"
     },
     "android": {
-      "package": "com.tuusuario.gymapp",
+      "package": "com.gymappdevs.gymapp",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -27,6 +27,11 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "5dd02cba-8c5a-4022-8fa1-af5e8e38c160"
+      }
     }
   }
 }
