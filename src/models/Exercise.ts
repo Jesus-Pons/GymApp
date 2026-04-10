@@ -5,7 +5,7 @@ export class Exercise extends Realm.Object<Exercise> {
   _id!: Realm.BSON.UUID;
   name!: string;
   series!: Realm.List<Serie>;
-  descanso!: number; // segundos
+  descanso!: number;
 
   get isCompleted(): boolean {
     if (!this.series || this.series.length === 0) return false;

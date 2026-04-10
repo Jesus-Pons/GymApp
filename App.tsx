@@ -8,13 +8,11 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import Svg, { Path, Circle, Polyline } from 'react-native-svg';
 
-// Modelos
 import { Routine } from './src/models/Routine';
 import { Exercise } from './src/models/Exercise';
 import { HistoryRoutine } from './src/models/HistoryRoutine';
 import { Serie } from './src/models/Serie';
 
-// Pantallas
 import { RutinasScreen } from './src/screens/RutinasScreen';
 import { HacerRutinaScreen } from './src/screens/HacerRutinaScreen';
 import { HistorialScreen } from './src/screens/HistorialScreen';
@@ -50,7 +48,6 @@ const ClockIcon = ({ color }: { color: string }) => (
   </Svg>
 );
 
-// Creamos un Stack para Rutinas. Así podemos ir de Rutinas -> Hacer Rutina sin perder el contexto.
 function RutinasStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -71,8 +68,8 @@ export default function App() {
           initialRouteName="Inicio"
           screenOptions={{
             headerShown: false,
-            tabBarActiveTintColor: '#007AFF', // Azul activo
-            tabBarInactiveTintColor: '#8E8E93', // Gris inactivo
+            tabBarActiveTintColor: '#007AFF',
+            tabBarInactiveTintColor: '#8E8E93',
             tabBarStyle: {
               backgroundColor: '#FFFFFF',
               borderTopWidth: 1,
